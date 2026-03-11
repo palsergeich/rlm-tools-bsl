@@ -1,155 +1,201 @@
-# RLM Tools
+# rlm-tools-bsl
 
-Your AI coding agent spends most of its token budget just *reading* your code — not reasoning about it. Every grep, file read, and glob result gets dumped into the conversation. On a large codebase, that's 25-35% of your context (and cost) burned on raw data the model never needed to see.
+MCP-сервер для токен-эффективного анализа кодовых баз 1С (BSL).
 
-RLM Tools gives your agent a persistent sandbox to explore code in. Data stays server-side. Only the conclusions come back.
+Адаптация open-source проекта [rlm-tools](https://github.com/stefanoshea/rlm-tools) под специфику платформы 1С:Предприятие — форматы исходников (CF/EDT), структура метаданных, кириллический код, XML-описания объектов.
+
+## Зачем
+
+Когда AI-агент анализирует код, большая часть токенов тратится на **чтение** — grep, чтение файлов, листинги каталогов. Всё это попадает в контекстное окно и быстро забивает его.
+
+rlm-tools-bsl решает эту проблему: агент выполняет поиск и чтение **на стороне сервера** в Python-песочнице. В контекст возвращается только `print()` — компактный результат вместо сырых данных.
+
+**Типичная экономия — 25-95% контекста** в зависимости от задачи.
+
+## Когда использовать
+
+**rlm-tools-bsl подходит, если:**
+- Дали выгрузку конфигурации 1С и нужно быстро разобраться в доработках
+- Нет времени и ресурсов на развёртывание RAG/графовой базы — просто указал путь к каталогу и спрашиваешь
+- Нужно проанализировать конкретную подсистему, механизм или блок кастомных доработок
+- Работаешь с любым форматом исходников: CF (выгрузка из Конфигуратора), EDT (1C:DT), MDO
+- Конфигурация большая (20K+ файлов) и нельзя скормить всё в контекст
+
+**rlm-tools-bsl не подходит, если:**
+- Нужен полный граф зависимостей объектов (кто вызывает кого, типы реквизитов по ссылкам) — для этого нужен RAG/графовый MCP с предварительной индексацией
+- Нужен семантический поиск по описаниям объектов — rlm-tools-bsl ищет по файлам и именам, не по эмбеддингам
+- Нужна работа с формами (элементы, привязки, события) — в BSL-файлах этого нет, нужен парсинг XML форм
+
+## Сравнение с RAG/графовым подходом
+
+По результатам тестирования на реальной конфигурации 1С:ERP (23 000+ файлов). Для сравнения использовался шаблонный MCP-сервер с индексацией метаданных (не полноценный граф с эмбеддингами).
+
+|                          | rlm-tools-bsl                                            | Шаблонный MCP с индексацией*                      |
+| ------------------------ | -------------------------------------------------------- | ------------------------------------------------- |
+| **Время старта**         | 0 сек (указал путь — работай)                            | Часы на индексацию                                |
+| **Инфраструктура**       | Ничего (один pip/uv install)                             | БД, сервер индексации (либо docker)               |
+| **Полнота анализа**      | Находит объекты, читает код, видит комментарии и историю | Находит то же + структурные связи между объектами |
+| **Скорость анализа**     | ~8-11 минут                                              | ~7-9 минут                                        |
+| **Глубина по коду**      | Читает тела процедур, комментарии, историю изменений     | Тела процедур + граф вызовов                      |
+| **Работа с метаданными** | XML-парсинг (реквизиты, ТЧ, ресурсы, измерения)          | Полная структура из БД                            |
+
+\* В проведенных тестах MCP с индексацией возвращал ~600K символов на задачу против ~91K у rlm-tools-bsl. Однако это особенность конкретной реализации (шаблонный поиск без эмбеддингов, полнотекстовые совпадения). Полноценный графовый MCP с эмбеддингами и чанкированием давал бы значительно более компактные ответы за счёт ранжирования по релевантности.
+
+**Вывод:** rlm-tools-bsl — это «поставил и поехал» инструмент для быстрого анализа. RAG/графовые решения дают более полную картину (граф зависимостей, семантический поиск), но требуют предварительной подготовки и инфраструктуры.
+
+## Как работает (под капотом)
+
+### Три инструмента MCP
+
+| Инструмент                      | Что делает                                                                                                           |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `rlm_start(path, query)`        | Открывает сессию на каталоге исходников. Определяет формат (CF/EDT), строит индекс BSL-файлов, возвращает session_id |
+| `rlm_execute(session_id, code)` | Выполняет Python-код в песочнице. Данные остаются на сервере, в контекст попадает только stdout                      |
+| `rlm_end(session_id)`           | Закрывает сессию, освобождает ресурсы                                                                                |
+
+### Что происходит при `rlm_start`
+
+1. **Определение формата** — сканирует структуру каталога и определяет: CF (Конфигуратор, каталоги `Ext/`), EDT (1C:EDT, файлы `.mdo`), или смешанный
+2. **Построение индекса** — находит все `.bsl` файлы, для каждого определяет: категорию (`Documents`, `Catalogs`, `CommonModules`...), имя объекта, тип модуля (`ObjectModule`, `ManagerModule`, `FormModule`...)
+3. **Дисковый кэш** — индекс сохраняется на диске в `%USERPROFILE%\.cache\rlm-tools-bsl\<хэш_пути>\file_index.json` (Windows) или `~/.cache/rlm-tools-bsl/<хэш_пути>/file_index.json` (Linux/macOS). При повторном запуске на том же каталоге (если количество .bsl файлов не изменилось) — индекс загружается мгновенно
+4. **Хелперы** — в песочницу добавляются BSL-специфичные функции для навигации по коду
+
+### Хелперы песочницы
+
+Стандартные (из rlm-tools):
+- `read_file(path)`, `read_files(paths)` — чтение файлов (кэшируется между вызовами)
+- `grep(pattern, path)`, `grep_summary(pattern)` — поиск по содержимому
+- `glob_files(pattern)` — поиск файлов по маске
+- `tree(path, max_depth)` — дерево каталогов
+
+BSL-специфичные (добавлены в rlm-tools-bsl):
+- `find_module(name)` — найти модули объекта по имени (например, `find_module("Номенклатура")` вернёт пути к ObjectModule, ManagerModule, FormModule)
+- `find_by_type(category)` — все объекты категории (`"Documents"`, `"CommonModules"`, `"InformationRegisters"`, ...)
+- `extract_procedures(path)` — извлечь сигнатуры всех Процедур/Функций из BSL-файла
+- `find_exports(path)` — только экспортные процедуры
+- `read_procedure(path, name)` — прочитать тело конкретной процедуры
+- `find_callers(name)` — найти все вызовы процедуры/функции по кодовой базе
+- `safe_grep(pattern, path)` — grep с ограничением количества результатов (безопасен на больших конфигурациях)
+- `parse_object_xml(path)` — парсинг XML метаданных 1С: реквизиты, табличные части, ресурсы, измерения, состав подсистемы. Поддерживает оба формата: CF и MDO (EDT)
+
+### Пример работы агента
+
+```
+Пользователь: "Как работает подсистема Спецодежда?"
+
+Агент вызывает rlm_start(path="D:/src/cf", query="подсистема Спецодежда")
+Агент вызывает rlm_execute:
+    modules = find_module("Спецодежда")
+    for m in modules:
+        print(m)
+    # Вывод: 3 строки с путями к модулям
+
+Агент вызывает rlm_execute:
+    procs = extract_procedures(modules[0])
+    for p in procs:
+        print(f"{p['name']} {'Экспорт' if p['export'] else ''}")
+    # Вывод: список процедур
+
+Агент вызывает rlm_execute:
+    body = read_procedure(modules[0], "ОбработкаПроведения")
+    print(body)
+    # Вывод: тело процедуры
+
+→ В контекст попали только print-результаты. Файлы целиком не читались.
+```
+
+## Совместимость с оригинальным rlm-tools
+
+Весь функционал оригинального [rlm-tools](https://github.com/stefanoshea/rlm-tools) сохранён:
+- Три MCP-инструмента (`rlm_start`, `rlm_execute`, `rlm_end`)
+- Все стандартные хелперы песочницы (`read_file`, `grep`, `glob_files`, `tree`, `llm_query` и др.)
+- Настройки (`RLM_MAX_SESSIONS`, `RLM_SESSION_TIMEOUT`, уровни effort)
+- Безопасность песочницы (read-only, ограниченные импорты, таймауты)
+- Работа с любыми кодовыми базами (не только 1С)
+
+BSL-функционал добавлен поверх, не ломая исходную механику.
+
+## Установка
+
+### 1. Клонировать репозиторий
 
 ```bash
-# Install in one line (Claude Code)
-claude mcp add rlm-tools -- uvx rlm-tools
-
-# Or Codex
-codex mcp add rlm-tools -- uvx rlm-tools
+git clone https://github.com/<your-repo>/rlm-tools-bsl.git
+cd rlm-tools-bsl
 ```
 
-That's it. Your agent automatically uses the sandbox for exploration. No config, no prompting changes.
+### 2. Установить глобально через uv
 
-## What Changes
-
-**Without RLM Tools** — agent greps for `import UIKit`, gets 500 matches dumped into context. Reads 10 files, burns all their content as tokens. Context window fills up. Agent forgets what it was doing.
-
-**With RLM Tools** — agent runs the same exploration in a server-side Python sandbox. Data stays in sandbox memory. Only the `print()` output enters context:
-
-```python
-matches = grep("import UIKit")
-by_module = {}
-for m in matches:
-    module = m["file"].split("/")[0]
-    by_module.setdefault(module, []).append(m)
-for module, ms in sorted(by_module.items(), key=lambda x: -len(x[1]))[:5]:
-    print(f"{module}: {len(ms)} files")
+```bash
+uv tool install . --force
 ```
 
-500 lines of grep results become 5 lines of summary. The agent sees what it needs, nothing more.
+Команда `rlm-tools-bsl` станет доступна глобально. `uv tool install` создаёт изолированное окружение и ставит пакет из текущего каталога — версия подхватывается из `pyproject.toml` автоматически.
 
-## Real-World Impact
+### 3. (Опционально) ANTHROPIC_API_KEY
 
-In typical coding workflows: **25-35% context reduction.** That means your agent can explore roughly 40-50% more code before hitting context limits.
+В песочнице есть хелпер `llm_query(prompt, context)` — он вызывает «маленькую» LLM (по умолчанию Claude Haiku) прямо из `rlm_execute`, не возвращаясь в основной контекст. Это полезно, когда агент нашёл много данных и хочет классифицировать или суммировать их на стороне сервера.
 
-In heavy exploration tasks (reading many files, broad searches), savings go much further:
+Для работы `llm_query` нужен API-ключ Anthropic:
 
-| Scenario | Standard Tools | RLM Tools | Saved |
-|---|---:|---:|---:|
-| Grep across full app | 40,045 chars | 1,644 chars | 95.9% |
-| Read 10 large files | 1,493,720 chars | 13,588 chars | 99.1% |
-| Multi-step exploration | 136,102 chars | 5,285 chars | 96.1% |
-| Grep then read matches | 340,408 chars | 6,022 chars | 98.2% |
-| Find all usages of a pattern | 13,478 chars | 3,691 chars | 72.6% |
-| Understand a module | 94,745 chars | 16,925 chars | 82.1% |
+```bash
+# Windows
+set ANTHROPIC_API_KEY=sk-ant-api03-...
 
-Full benchmark methodology and reproduction steps: [`docs/benchmarks.md`](docs/benchmarks.md)
+# Linux/macOS
+export ANTHROPIC_API_KEY=sk-ant-api03-...
+```
 
-## How It Works
+Ключ получается на [console.anthropic.com](https://console.anthropic.com) → API Keys. Вызовы `llm_query` тарифицируются отдельно по ценам Anthropic API.
 
-Three MCP tools. That's the entire API:
+**Без ключа всё остальное работает нормально** — `find_module`, `grep`, `read_file`, `parse_object_xml` и все прочие хелперы не требуют API-ключа. Просто `llm_query()` будет недоступен.
 
-| Tool | Purpose |
-|---|---|
-| `rlm_start(path, query)` | Open a session on a directory |
-| `rlm_execute(session_id, code)` | Run Python in the sandbox |
-| `rlm_end(session_id)` | Close session, free resources |
+### 4. Настроить MCP
 
-The sandbox provides built-in helpers:
+**Claude Code (глобально):**
+```bash
+claude mcp add rlm-tools-bsl -- rlm-tools-bsl
+```
 
-- `read_file(path)` / `read_files(paths)` — Read files into variables (cached across calls)
-- `grep(pattern)` / `grep_summary(pattern)` / `grep_read(pattern)` — Search
-- `glob_files(pattern)` — Find files by pattern
-- `tree(path, max_depth)` — Directory structure
-- `llm_query(prompt, context)` — Sub-LLM analysis (optional, requires API key)
-
-Variables persist across `rlm_execute` calls within a session. The agent can build up understanding incrementally — search, filter, read, analyze — without any intermediate data touching the context window.
-
-## Works With
-
-RLM Tools is a standard [MCP](https://modelcontextprotocol.io) server. It works with any MCP-compatible client: **Claude Code**, **Codex**, **Cursor**, and others.
-
-<details>
-<summary><strong>Other installation methods</strong></summary>
-
-### JSON MCP config (Cursor, Windsurf, etc.)
-
+**Или в `.claude.json` / `mcp.json`:**
 ```json
 {
   "mcpServers": {
-    "rlm-tools": {
-      "command": "uvx",
-      "args": ["rlm-tools"]
+    "rlm-tools-bsl": {
+      "command": "rlm-tools-bsl"
     }
   }
 }
 ```
 
-### Direct run
-
-```bash
-uvx rlm-tools
+**Для разработки (запуск из исходников):**
+```json
+{
+  "mcpServers": {
+    "rlm-tools-bsl": {
+      "command": "uv",
+      "args": ["run", "rlm-tools-bsl"]
+    }
+  }
+}
 ```
 
-### From source
+### 5. Проверить
 
-```bash
-git clone https://github.com/stefanoshea/rlm-tools.git
-cd rlm-tools
-uv sync
-uv run rlm-tools
+Откройте проект с исходниками 1С в Claude Code и спросите:
+```
+Используй rlm-tools-bsl: найди все модули объекта "Номенклатура" и покажи экспортные функции
 ```
 
-Then point your MCP client to `command: uv`, `args: ["--directory", "/path/to/rlm-tools", "run", "rlm-tools"]`.
-
-</details>
-
-## Configuration
-
-Copy `.env.example` to `.env` to customize. All settings are optional — RLM Tools works out of the box with zero config.
-
-The core exploration features (read, grep, glob, tree) require no API key. The optional `llm_query()` helper calls the Anthropic API for semantic analysis within the sandbox — this is the only feature that requires a key.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | — | Required for `llm_query()` only. Uses Anthropic's API (Claude). |
-| `RLM_SUB_MODEL` | `claude-haiku-4-5-20251001` | Claude model used for `llm_query()` |
-| `RLM_MAX_SESSIONS` | `5` | Max concurrent sessions |
-| `RLM_SESSION_TIMEOUT` | `10` | Session timeout in minutes |
-
-## Security
-
-The sandbox is read-only and restricted:
-
-- **Imports**: Safe stdlib only (re, json, collections, math, etc.)
-- **Builtins**: Blocks exec, eval, compile, `__import__`, breakpoint
-- **File access**: Read-only, scoped to session directory, path traversal blocked
-- **Execution**: Configurable per-call timeout (default 30s)
-- **Rate limits**: Configurable max calls per session
-
-## Background
-
-RLM Tools implements an [RLM-style](https://arxiv.org/abs/2512.24601) exploration loop: keep raw data in tool-side memory, send only compact outputs to the model. Built on the [Model Context Protocol](https://modelcontextprotocol.io).
-
-## Development
+## Разработка
 
 ```bash
-git clone https://github.com/stefanoshea/rlm-tools.git
-cd rlm-tools
+git clone https://github.com/<your-repo>/rlm-tools-bsl.git
+cd rlm-tools-bsl
 uv sync --dev
-pytest tests
+uv run python -m pytest tests/ -q
 ```
 
-Run comparative benchmarks (requires a local project checkout):
+## Лицензия
 
-```bash
-RLM_EVAL_PROJECT_PATH=/path/to/project pytest evals -q -s
-```
-
-## License
-
-MIT
+MIT (наследуется от [rlm-tools](https://github.com/stefanoshea/rlm-tools))
