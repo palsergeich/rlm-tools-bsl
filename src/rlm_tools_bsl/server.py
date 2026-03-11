@@ -131,13 +131,13 @@ def _rlm_start(
     max_llm_calls: int | None = None,
     max_execute_calls: int | None = None,
     execution_timeout_seconds: int = 30,
-    include_metadata: bool = True,
+    include_metadata: bool = False,
 ) -> str:
     _cleanup_expired_resources()
 
     resolved = str(pathlib.Path(path).resolve())
     if not os.path.isdir(resolved):
-        return json.dumps({"error": f"Directory not found: {path}"})
+        return json.dumps({"error": f"Directory not found: {path}"}, ensure_ascii=False)
 
     effort_config = EFFORT_LEVELS.get(effort, EFFORT_LEVELS["medium"])
     if max_llm_calls is None:
@@ -154,11 +154,11 @@ def _rlm_start(
             max_execute_calls=max_execute_calls,
         )
     except RuntimeError as e:
-        return json.dumps({"error": str(e)})
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     session = session_manager.get(session_id)
     if not session:
-        return json.dumps({"error": f"Failed to create session for path: {path}"})
+        return json.dumps({"error": f"Failed to create session for path: {path}"}, ensure_ascii=False)
 
     metadata = _scan_metadata(resolved) if include_metadata else {}
 
@@ -191,6 +191,7 @@ def _rlm_start(
         "safe_grep(pattern, name_hint='', max_files=20) -> list[dict]",
         "read_procedure(path, proc_name) -> str|None",
         "find_callers(proc_name, module_hint='', max_files=20) -> list[dict]",
+        "parse_object_xml(path) -> dict  # parse 1C metadata XML: attributes, tabular sections, dimensions, resources, subsystem content",
     ]
     if has_llm_tools:
         available_functions.extend([
@@ -210,7 +211,7 @@ def _rlm_start(
         "available_functions": available_functions,
         "strategy": strategy,
     }
-    return json.dumps(response)
+    return json.dumps(response, ensure_ascii=False)
 
 
 def _rlm_execute(
@@ -222,11 +223,11 @@ def _rlm_execute(
     _cleanup_expired_resources()
     session = session_manager.get(session_id)
     if not session:
-        return json.dumps({"error": f"Session '{session_id}' not found or expired"})
+        return json.dumps({"error": f"Session '{session_id}' not found or expired"}, ensure_ascii=False)
 
     sandbox = _sandboxes.get(session_id)
     if not sandbox:
-        return json.dumps({"error": f"Sandbox not found for session '{session_id}'"})
+        return json.dumps({"error": f"Sandbox not found for session '{session_id}'"}, ensure_ascii=False)
 
     if session.execute_calls >= session.max_execute_calls:
         return json.dumps({
@@ -234,7 +235,7 @@ def _rlm_execute(
                 "Execution call limit exceeded: "
                 f"{session.execute_calls} >= {session.max_execute_calls}"
             )
-        })
+        }, ensure_ascii=False)
 
     session.execute_calls += 1
     result = sandbox.execute(code)
@@ -260,7 +261,7 @@ def _rlm_execute(
             "glob_files", "tree", "find_files",
             "find_module", "find_by_type",
             "extract_procedures", "find_exports",
-            "safe_grep", "read_procedure", "find_callers",
+            "safe_grep", "read_procedure", "find_callers", "parse_object_xml",
             "llm_query", "llm_query_batched",
         }
         new_vars = sorted(
@@ -275,13 +276,13 @@ def _rlm_execute(
         if len(new_vars) > max_new_variables:
             response["new_variables_truncated_count"] = len(new_vars) - max_new_variables
 
-    return json.dumps(response)
+    return json.dumps(response, ensure_ascii=False)
 
 
 def _rlm_end(session_id: str) -> str:
     session_manager.end(session_id)
     _sandboxes.pop(session_id, None)
-    return json.dumps({"success": True})
+    return json.dumps({"success": True}, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -293,7 +294,7 @@ async def rlm_start(
     max_llm_calls: Annotated[int | None, Field(description="Override max llm_query calls (default from effort level)")] = None,
     max_execute_calls: Annotated[int | None, Field(description="Override max rlm_execute calls (default from effort level)")] = None,
     execution_timeout_seconds: Annotated[int, Field(description="Per-rlm_execute timeout in seconds", ge=1, le=300)] = 30,
-    include_metadata: Annotated[bool, Field(description="Scan directory and include file counts/types in response (set false for faster startup)")] = True,
+    include_metadata: Annotated[bool, Field(description="Scan directory and include file counts/types in response (slow on large configs, disabled by default)")] = False,
 ) -> str:
     """Start a BSL code exploration session on a 1C codebase. Returns session_id, detected config format, BSL helper functions, and exploration strategy. IMPORTANT: For large 1C configs (23K+ files), NEVER grep on broad paths -- use find_module() first."""
     return _rlm_start(
@@ -325,7 +326,7 @@ async def rlm_execute(
         le=200,
     )] = 20,
 ) -> str:
-    """Execute Python in the BSL sandbox. BSL helpers: find_module, find_by_type, extract_procedures, find_exports, safe_grep, read_procedure, find_callers. Standard: read_file, read_files, grep, grep_summary, grep_read, glob_files, tree. CRITICAL: grep on path='.' ALWAYS times out on large 1C configs. Use find_module() first."""
+    """Execute Python in the BSL sandbox. BSL helpers: find_module, find_by_type, extract_procedures, find_exports, safe_grep, read_procedure, find_callers, parse_object_xml. Standard: read_file, read_files, grep, grep_summary, grep_read, glob_files, tree. CRITICAL: grep on path='.' ALWAYS times out on large 1C configs. Use find_module() first."""
     return _rlm_execute(session_id, code, detail_level, max_new_variables)
 
 

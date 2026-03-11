@@ -97,7 +97,7 @@ RLM_START_DESCRIPTION = (
 RLM_EXECUTE_DESCRIPTION = (
     "Execute Python in the BSL sandbox.\n"
     "BSL helpers: find_module, find_by_type, extract_procedures, find_exports,\n"
-    "safe_grep, read_procedure, find_callers.\n"
+    "safe_grep, read_procedure, find_callers, parse_object_xml.\n"
     "Standard: read_file, read_files, grep, grep_summary, grep_read, glob_files, tree.\n"
     "CRITICAL: grep on path='.' ALWAYS times out on large 1C configs. Use find_module() first."
 )

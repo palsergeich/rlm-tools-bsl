@@ -52,7 +52,7 @@ def test_metadata_includes_file_types():
         open(os.path.join(tmpdir, "b.py"), "w").close()
         open(os.path.join(tmpdir, "c.txt"), "w").close()
 
-        result = _rlm_start(path=tmpdir, query="test")
+        result = _rlm_start(path=tmpdir, query="test", include_metadata=True)
         data = json.loads(result)
         assert data["metadata"]["total_files"] == 3
         assert ".py" in data["metadata"]["file_types"]
