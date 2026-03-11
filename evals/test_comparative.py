@@ -466,7 +466,7 @@ class TestModuleUnderstandingComparison:
         sched_dir = APP_PROJECT_PATH / "app" / "ScheduleTab"
 
         with Timer() as t:
-            from rlm_tools.helpers import make_helpers
+            from rlm_tools_bsl.helpers import make_helpers
             helpers, _ = make_helpers(str(APP_PROJECT_PATH))
             tree_output = helpers["tree"]("app/ScheduleTab", max_depth=2)
         baseline.steps.append(_baseline_step(
@@ -509,7 +509,7 @@ class TestModuleUnderstandingComparison:
 class TestSessionMetadata:
     def test_start_returns_valid_metadata(self, apple_path):
         import json
-        from rlm_tools.server import _rlm_start, _rlm_end
+        from rlm_tools_bsl.server import _rlm_start, _rlm_end
 
         result = json.loads(_rlm_start(path=str(apple_path / "app"), query="metadata test"))
         try:

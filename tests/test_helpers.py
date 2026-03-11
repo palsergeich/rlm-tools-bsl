@@ -1,6 +1,6 @@
 import os
 import tempfile
-from rlm_tools.helpers import make_helpers
+from rlm_tools_bsl.helpers import make_helpers
 
 
 def test_read_file():
@@ -161,3 +161,46 @@ def test_grep_read_max_files():
         result = helpers["grep_read"]("def", max_files=2)
         assert len(result["files"]) == 2
         assert "more" in result["summary"]
+
+
+def test_find_files():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        os.makedirs(os.path.join(tmpdir, "CommonModules", "MyModule", "Ext"))
+        with open(os.path.join(tmpdir, "CommonModules", "MyModule", "Ext", "Module.bsl"), "w") as f:
+            f.write("// code")
+        with open(os.path.join(tmpdir, "script.py"), "w") as f:
+            f.write("pass")
+
+        helpers, _ = make_helpers(tmpdir)
+        results = helpers["find_files"]("Module.bsl")
+        assert len(results) >= 1
+        assert any("Module.bsl" in r for r in results)
+
+        results2 = helpers["find_files"]("script")
+        assert len(results2) >= 1
+
+        results3 = helpers["find_files"]("nonexistent_xyz")
+        assert len(results3) == 0
+
+
+def test_find_files_case_insensitive():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with open(os.path.join(tmpdir, "MyFile.txt"), "w") as f:
+            f.write("test")
+
+        helpers, _ = make_helpers(tmpdir)
+        results = helpers["find_files"]("myfile")
+        assert len(results) == 1
+
+
+def test_read_file_utf8_sig():
+    """Test that utf-8-sig BOM is handled correctly."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_file = os.path.join(tmpdir, "bom.txt")
+        with open(test_file, "wb") as f:
+            f.write(b"\xef\xbb\xbfhello with BOM")
+
+        helpers, _ = make_helpers(tmpdir)
+        content = helpers["read_file"]("bom.txt")
+        assert content == "hello with BOM"
+        assert not content.startswith("\ufeff")

@@ -1,13 +1,17 @@
+from __future__ import annotations
+
 import io
 import contextlib
 import builtins
 import pathlib
 import signal
 import threading
+import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from rlm_tools.helpers import make_helpers
+from rlm_tools_bsl.helpers import make_helpers
+from rlm_tools_bsl.bsl_helpers import make_bsl_helpers
 
 
 ALLOWED_MODULES = frozenset({
@@ -46,10 +50,12 @@ class Sandbox:
         base_path: str,
         max_output_chars: int = 15_000,
         execution_timeout_seconds: int = 30,
+        format_info=None,
     ):
         self._base_path = base_path
         self._max_output_chars = max_output_chars
         self._execution_timeout_seconds = execution_timeout_seconds
+        self._format_info = format_info
         self._namespace: dict = {}
         self._resolve_safe = None
         self._setup_namespace()
@@ -84,6 +90,17 @@ class Sandbox:
         helpers, self._resolve_safe = make_helpers(self._base_path)
         self._namespace.update(helpers)
 
+        if self._format_info is not None:
+            bsl_helpers = make_bsl_helpers(
+                base_path=self._base_path,
+                resolve_safe=self._resolve_safe,
+                read_file_fn=helpers["read_file"],
+                grep_fn=helpers["grep"],
+                glob_files_fn=helpers["glob_files"],
+                format_info=self._format_info,
+            )
+            self._namespace.update(bsl_helpers)
+
     @contextmanager
     def _execution_timeout(self):
         if (
@@ -116,8 +133,8 @@ class Sandbox:
             with contextlib.redirect_stdout(stdout_capture):
                 with self._execution_timeout():
                     exec(code, self._namespace)
-        except Exception as e:
-            error = f"{type(e).__name__}: {e}"
+        except Exception:
+            error = traceback.format_exc()
 
         stdout = stdout_capture.getvalue()
         if len(stdout) > self._max_output_chars:

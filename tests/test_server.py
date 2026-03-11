@@ -1,7 +1,7 @@
 import json
 import os
 import tempfile
-from rlm_tools.server import _rlm_start, _rlm_execute, _rlm_end
+from rlm_tools_bsl.server import _rlm_start, _rlm_execute, _rlm_end
 
 
 def test_full_rlm_flow():
@@ -148,12 +148,14 @@ def test_new_helpers_in_sandbox():
 
 
 def test_new_defaults():
+    """Default effort=medium -> 25 execute calls, 15 llm calls."""
     with tempfile.TemporaryDirectory() as tmpdir:
         open(os.path.join(tmpdir, "a.py"), "w").close()
 
         result = _rlm_start(path=tmpdir, query="test defaults")
         data = json.loads(result)
-        assert data["limits"]["max_execute_calls"] == 50
+        assert data["limits"]["max_execute_calls"] == 25  # medium effort
+        assert data["limits"]["max_llm_calls"] == 15  # medium effort
         assert data["limits"]["execution_timeout_seconds"] == 30
 
         _rlm_end(data["session_id"])
@@ -179,5 +181,96 @@ def test_full_detail_excludes_helper_functions_from_variables():
         assert "read_files" not in result["variables"]
         assert "grep_summary" not in result["variables"]
         assert "grep_read" not in result["variables"]
+        assert "find_module" not in result["variables"]
+        assert "find_by_type" not in result["variables"]
+        assert "extract_procedures" not in result["variables"]
+        assert "safe_grep" not in result["variables"]
+        assert "find_files" not in result["variables"]
 
         _rlm_end(session_id)
+
+
+def test_config_format_returned():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        open(os.path.join(tmpdir, "script.bsl"), "w").close()
+
+        result = _rlm_start(path=tmpdir, query="test format")
+        data = json.loads(result)
+        assert "config_format" in data
+        assert data["config_format"] in ("cf", "edt", "unknown")
+
+        _rlm_end(data["session_id"])
+
+
+def test_strategy_always_returned():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        open(os.path.join(tmpdir, "a.bsl"), "w").close()
+
+        result = _rlm_start(path=tmpdir, query="test strategy")
+        data = json.loads(result)
+        assert "strategy" in data
+        assert "find_module" in data["strategy"]
+        assert "CRITICAL" in data["strategy"]
+
+        _rlm_end(data["session_id"])
+
+
+def test_effort_levels():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        open(os.path.join(tmpdir, "a.py"), "w").close()
+
+        for effort, expected_exec in [("low", 10), ("medium", 25), ("high", 50), ("max", 100)]:
+            result = _rlm_start(path=tmpdir, query="test effort", effort=effort)
+            data = json.loads(result)
+            assert data["limits"]["max_execute_calls"] == expected_exec, f"effort={effort}"
+            _rlm_end(data["session_id"])
+
+
+def test_bsl_helpers_in_sandbox():
+    """BSL helpers should be available in sandbox when format_info is provided."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        os.makedirs(os.path.join(tmpdir, "CommonModules", "TestModule", "Ext"))
+        with open(os.path.join(tmpdir, "CommonModules", "TestModule", "Ext", "Module.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура Тест() Экспорт\nКонецПроцедуры\n")
+        with open(os.path.join(tmpdir, "Configuration.xml"), "w") as f:
+            f.write("<Configuration/>")
+
+        start = json.loads(_rlm_start(path=tmpdir, query="test bsl helpers"))
+        session_id = start["session_id"]
+        assert start["config_format"] == "cf"
+
+        # Test find_module
+        result = json.loads(_rlm_execute(
+            session_id=session_id,
+            code="modules = find_module('TestModule')\nprint(len(modules))"
+        ))
+        assert "1" in result["stdout"]
+        assert result["error"] is None
+
+        # Test extract_procedures
+        result2 = json.loads(_rlm_execute(
+            session_id=session_id,
+            code="procs = extract_procedures(modules[0]['path'])\nprint(procs[0]['name'])"
+        ))
+        assert "Тест" in result2["stdout"]
+
+        _rlm_end(session_id)
+
+
+def test_override_effort_limits():
+    """Manual max_llm_calls and max_execute_calls override effort defaults."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        open(os.path.join(tmpdir, "a.py"), "w").close()
+
+        result = _rlm_start(
+            path=tmpdir,
+            query="test override",
+            effort="low",
+            max_execute_calls=99,
+            max_llm_calls=77,
+        )
+        data = json.loads(result)
+        assert data["limits"]["max_execute_calls"] == 99
+        assert data["limits"]["max_llm_calls"] == 77
+
+        _rlm_end(data["session_id"])

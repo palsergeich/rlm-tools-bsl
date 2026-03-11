@@ -7,7 +7,7 @@ import shutil
 
 import pytest
 
-from rlm_tools.sandbox import Sandbox
+from rlm_tools_bsl.sandbox import Sandbox
 
 APPLE_PROJECT_PATH = os.environ.get(
     "RLM_EVAL_PROJECT_PATH",
@@ -90,7 +90,7 @@ def _build_overlay_root(
     package_root: pathlib.Path | None,
     tests_root: pathlib.Path | None,
 ) -> pathlib.Path:
-    overlay_root = pathlib.Path(tempfile.mkdtemp(prefix="rlm_tools_evals_"))
+    overlay_root = pathlib.Path(tempfile.mkdtemp(prefix="rlm_tools_bsl_evals_"))
     os.symlink(app_root, overlay_root / "app")
 
     if tests_root:

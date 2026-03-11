@@ -4,15 +4,15 @@ import re
 
 
 _SKIP_DIRS = {
-    ".git", ".build", ".swiftpm", "DerivedData", "Build", "Pods",
-    "node_modules", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache",
-    "Carthage", ".cache", "xcuserdata",
+    ".git", ".build", "node_modules", ".venv", "venv",
+    "__pycache__", ".tox", ".mypy_cache", ".cache", ".rlm_cache",
 }
 
 _BINARY_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".tar", ".gz",
     ".xz", ".bz2", ".o", ".a", ".dylib", ".framework", ".xcassets",
     ".car", ".nib", ".storyboardc", ".momd", ".sqlite", ".db",
+    ".epf", ".erf", ".bin", ".mxlx", ".cmi", ".dcss", ".dcssca",
 }
 
 
@@ -45,7 +45,7 @@ def make_helpers(base_path: str) -> tuple[dict, callable]:
         cache_key = str(target)
         if cache_key in _file_cache:
             return _file_cache[cache_key]
-        content = target.read_text(errors="replace")
+        content = target.read_text(encoding="utf-8-sig", errors="replace")
         _file_cache[cache_key] = content
         return content
 
@@ -76,7 +76,7 @@ def make_helpers(base_path: str) -> tuple[dict, callable]:
             if ext in _BINARY_EXTENSIONS:
                 continue
             try:
-                for i, line in enumerate(file_path.read_text(errors="replace").splitlines(), 1):
+                for i, line in enumerate(file_path.read_text(encoding="utf-8-sig", errors="replace").splitlines(), 1):
                     if compiled.search(line):
                         results.append({
                             "file": str(file_path.relative_to(base)),
@@ -201,6 +201,25 @@ def make_helpers(base_path: str) -> tuple[dict, callable]:
         _walk(target, "", 0)
         return "\n".join(lines)
 
+    _file_index: list[str] = []
+    _file_index_built = [False]
+
+    def _build_file_index():
+        if _file_index_built[0]:
+            return
+        for fpath in _walk_files(base):
+            try:
+                _file_index.append(str(fpath.relative_to(base)))
+            except ValueError:
+                continue
+        _file_index_built[0] = True
+
+    def find_files(name: str) -> list[str]:
+        """Find files by substring match in relative path (case-insensitive)."""
+        _build_file_index()
+        needle = name.lower()
+        return [f for f in _file_index if needle in f.lower()][:100]
+
     return {
         "read_file": read_file,
         "read_files": read_files,
@@ -209,4 +228,5 @@ def make_helpers(base_path: str) -> tuple[dict, callable]:
         "grep_read": grep_read,
         "glob_files": glob_files,
         "tree": tree,
+        "find_files": find_files,
     }, _resolve_safe

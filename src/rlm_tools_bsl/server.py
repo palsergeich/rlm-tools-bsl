@@ -8,14 +8,21 @@ from typing import Annotated, Literal
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from rlm_tools.session import SessionManager
-from rlm_tools.sandbox import Sandbox
-from rlm_tools.llm_bridge import make_llm_query, make_llm_query_batched
+from rlm_tools_bsl.session import SessionManager
+from rlm_tools_bsl.sandbox import Sandbox
+from rlm_tools_bsl.llm_bridge import make_llm_query, make_llm_query_batched
+from rlm_tools_bsl.format_detector import detect_format
+from rlm_tools_bsl.bsl_knowledge import (
+    EFFORT_LEVELS,
+    RLM_EXECUTE_DESCRIPTION,
+    RLM_START_DESCRIPTION,
+    get_strategy,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("rlm-tools")
+mcp = FastMCP("rlm-tools-bsl")
 
 session_manager = SessionManager(
     max_sessions=int(os.environ.get("RLM_MAX_SESSIONS", "5")),
@@ -25,7 +32,7 @@ session_manager = SessionManager(
 _sandboxes: dict[str, Sandbox] = {}
 
 
-from rlm_tools.helpers import _SKIP_DIRS, _BINARY_EXTENSIONS
+from rlm_tools_bsl.helpers import _SKIP_DIRS, _BINARY_EXTENSIONS
 
 
 def _scan_metadata(path: str) -> dict:
@@ -52,7 +59,7 @@ def _scan_metadata(path: str) -> dict:
             if ext not in _BINARY_EXTENSIONS:
                 try:
                     fpath = os.path.join(dirpath, fname)
-                    with open(fpath, errors="replace") as f:
+                    with open(fpath, encoding="utf-8-sig", errors="replace") as f:
                         file_line_count = sum(1 for _ in f)
                     total_lines += file_line_count
 
@@ -119,11 +126,11 @@ def _install_session_llm_tools(session, sandbox: Sandbox) -> bool:
 def _rlm_start(
     path: str,
     query: str,
+    effort: str = "medium",
     max_output_chars: int = 15_000,
-    max_llm_calls: int = 50,
-    max_execute_calls: int = 50,
+    max_llm_calls: int | None = None,
+    max_execute_calls: int | None = None,
     execution_timeout_seconds: int = 30,
-    include_guidance: bool = False,
     include_metadata: bool = True,
 ) -> str:
     _cleanup_expired_resources()
@@ -131,6 +138,12 @@ def _rlm_start(
     resolved = str(pathlib.Path(path).resolve())
     if not os.path.isdir(resolved):
         return json.dumps({"error": f"Directory not found: {path}"})
+
+    effort_config = EFFORT_LEVELS.get(effort, EFFORT_LEVELS["medium"])
+    if max_llm_calls is None:
+        max_llm_calls = effort_config.max_llm_calls
+    if max_execute_calls is None:
+        max_execute_calls = effort_config.max_execute_calls
 
     try:
         session_id = session_manager.create(
@@ -149,10 +162,14 @@ def _rlm_start(
 
     metadata = _scan_metadata(resolved) if include_metadata else {}
 
+    format_info = detect_format(resolved)
+    strategy = get_strategy(effort, format_info)
+
     sandbox = Sandbox(
         base_path=resolved,
         max_output_chars=max_output_chars,
         execution_timeout_seconds=execution_timeout_seconds,
+        format_info=format_info,
     )
     has_llm_tools = _install_session_llm_tools(session, sandbox)
 
@@ -166,6 +183,14 @@ def _rlm_start(
         "grep_read(pattern, path='.', max_files=10, context_lines=0) -> {matches, files, summary}",
         "glob_files(pattern)",
         "tree(path='.', max_depth=3)",
+        "find_files(name) -> list[str]",
+        "find_module(name) -> list[dict]",
+        "find_by_type(meta_type, name='') -> list[dict]",
+        "extract_procedures(path) -> list[dict]",
+        "find_exports(path) -> list[dict]",
+        "safe_grep(pattern, name_hint='', max_files=20) -> list[dict]",
+        "read_procedure(path, proc_name) -> str|None",
+        "find_callers(proc_name, module_hint='', max_files=20) -> list[dict]",
     ]
     if has_llm_tools:
         available_functions.extend([
@@ -175,6 +200,7 @@ def _rlm_start(
 
     response: dict = {
         "session_id": session_id,
+        "config_format": format_info.format_label,
         "metadata": metadata,
         "limits": {
             "max_llm_calls": session.max_llm_calls,
@@ -182,27 +208,8 @@ def _rlm_start(
             "execution_timeout_seconds": execution_timeout_seconds,
         },
         "available_functions": available_functions,
+        "strategy": strategy,
     }
-    if include_guidance:
-        response["strategy"] = (
-            "You are exploring a codebase through code. "
-            "Each rlm_execute call should batch 3-5+ operations into a single Python script. "
-            "Pattern: grep/glob to find targets -> read relevant files -> extract/analyze -> store in variables. "
-            "Aim for ~5-15 rlm_execute calls total, not 50+. "
-            "Use llm_query() for semantic analysis on extracted snippets. "
-            "Use llm_query_batched() when analyzing multiple snippets concurrently. "
-            "Variables persist between calls — build on previous results."
-        )
-        response["example"] = (
-            "# Good: batch multiple operations in ONE call\n"
-            "matches = grep('Reducer', '.')\n"
-            "files = list(set(m['file'] for m in matches))[:5]\n"
-            "for f in files:\n"
-            "    content = read_file(f)\n"
-            "    lines = content.split('\\n')\n"
-            "    structs = [l.strip() for l in lines if 'struct ' in l or 'class ' in l]\n"
-            "    print(f'{f}: {structs}')\n"
-        )
     return json.dumps(response)
 
 
@@ -250,7 +257,10 @@ def _rlm_execute(
         excluded_vars = {
             "read_file", "read_files",
             "grep", "grep_summary", "grep_read",
-            "glob_files", "tree",
+            "glob_files", "tree", "find_files",
+            "find_module", "find_by_type",
+            "extract_procedures", "find_exports",
+            "safe_grep", "read_procedure", "find_callers",
             "llm_query", "llm_query_batched",
         }
         new_vars = sorted(
@@ -276,24 +286,24 @@ def _rlm_end(session_id: str) -> str:
 
 @mcp.tool()
 async def rlm_start(
-    path: Annotated[str, Field(description="Absolute path to the directory to explore")],
-    query: Annotated[str, Field(description="What you want to find or analyze")],
+    path: Annotated[str, Field(description="Absolute path to the 1C BSL codebase directory")],
+    query: Annotated[str, Field(description="What you want to find or analyze in the BSL codebase")],
+    effort: Annotated[str, Field(description="Analysis depth: low (quick lookup), medium (standard), high (deep trace), max (exhaustive)")] = "medium",
     max_output_chars: Annotated[int, Field(description="Max characters per execute output", ge=100, le=100_000)] = 15_000,
-    max_llm_calls: Annotated[int, Field(description="Maximum llm_query/llm_query_batched calls for this session", ge=1, le=10_000)] = 50,
-    max_execute_calls: Annotated[int, Field(description="Maximum rlm_execute calls for this session", ge=1, le=10_000)] = 50,
+    max_llm_calls: Annotated[int | None, Field(description="Override max llm_query calls (default from effort level)")] = None,
+    max_execute_calls: Annotated[int | None, Field(description="Override max rlm_execute calls (default from effort level)")] = None,
     execution_timeout_seconds: Annotated[int, Field(description="Per-rlm_execute timeout in seconds", ge=1, le=300)] = 30,
-    include_guidance: Annotated[bool, Field(description="Include strategy/example guidance text in the response (larger payload)")] = False,
     include_metadata: Annotated[bool, Field(description="Scan directory and include file counts/types in response (set false for faster startup)")] = True,
 ) -> str:
-    """Start an RLM exploration session. Returns session_id, metadata, limits, and available functions. Set include_guidance=true to include strategy/example coaching text."""
+    """Start a BSL code exploration session on a 1C codebase. Returns session_id, detected config format, BSL helper functions, and exploration strategy. IMPORTANT: For large 1C configs (23K+ files), NEVER grep on broad paths -- use find_module() first."""
     return _rlm_start(
         path=path,
         query=query,
+        effort=effort,
         max_output_chars=max_output_chars,
         max_llm_calls=max_llm_calls,
         max_execute_calls=max_execute_calls,
         execution_timeout_seconds=execution_timeout_seconds,
-        include_guidance=include_guidance,
         include_metadata=include_metadata,
     )
 
@@ -315,7 +325,7 @@ async def rlm_execute(
         le=200,
     )] = 20,
 ) -> str:
-    """Execute Python in the session sandbox. detail_level controls response payload size (compact, usage, or full)."""
+    """Execute Python in the BSL sandbox. BSL helpers: find_module, find_by_type, extract_procedures, find_exports, safe_grep, read_procedure, find_callers. Standard: read_file, read_files, grep, grep_summary, grep_read, glob_files, tree. CRITICAL: grep on path='.' ALWAYS times out on large 1C configs. Use find_module() first."""
     return _rlm_execute(session_id, code, detail_level, max_new_variables)
 
 

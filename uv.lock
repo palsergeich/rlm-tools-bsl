@@ -810,7 +810,7 @@ wheels = [
 ]
 
 [[package]]
-name = "rlm-tools"
+name = "rlm-tools-bsl"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

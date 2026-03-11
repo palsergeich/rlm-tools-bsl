@@ -1,5 +1,5 @@
 from unittest.mock import patch, MagicMock
-from rlm_tools.llm_bridge import make_llm_query, make_llm_query_batched
+from rlm_tools_bsl.llm_bridge import make_llm_query, make_llm_query_batched
 
 
 def test_llm_query_calls_anthropic():

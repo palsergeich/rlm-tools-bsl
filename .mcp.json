@@ -2,7 +2,7 @@
   "mcpServers": {
     "rlm-tools": {
       "command": "uvx",
-      "args": ["rlm-tools"],
+      "args": ["rlm-tools-bsl"],
       "env": {
         "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
       }
