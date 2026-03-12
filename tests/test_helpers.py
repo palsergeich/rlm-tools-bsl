@@ -47,6 +47,21 @@ def test_glob_files():
         assert len(py_files) == 2
 
 
+def test_glob_files_dir_pattern_hint():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        subdir = os.path.join(tmpdir, "MyModule")
+        os.makedirs(subdir)
+        open(os.path.join(subdir, "Module.bsl"), "w").close()
+
+        helpers, _ = make_helpers(tmpdir)
+        # Pattern matches a directory, not files — should return hint
+        result = helpers["glob_files"]("My*")
+        assert len(result) == 1
+        assert result[0].startswith("[hint:")
+        assert "1 directories" in result[0]
+        assert "My*" in result[0]
+
+
 def test_tree():
     with tempfile.TemporaryDirectory() as tmpdir:
         os.makedirs(os.path.join(tmpdir, "src"))

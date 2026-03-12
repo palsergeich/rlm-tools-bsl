@@ -224,8 +224,11 @@ def make_helpers(base_path: str) -> tuple[dict, callable]:
         """Find files by glob pattern. Returns list of relative path strings."""
         matches = list(base.glob(pattern))
         safe_matches: list[str] = []
+        dir_matches = 0
         for match in matches:
             if not match.is_file():
+                if match.is_dir():
+                    dir_matches += 1
                 continue
             parts = match.relative_to(base).parts
             if any(part in _SKIP_DIRS or part.startswith(".") for part in parts[:-1]):
@@ -234,6 +237,11 @@ def make_helpers(base_path: str) -> tuple[dict, callable]:
                 safe_matches.append(str(match.resolve().relative_to(base)))
             except ValueError:
                 continue
+        if not safe_matches and dir_matches:
+            return [
+                f"[hint: pattern '{pattern}' matched {dir_matches} directories but no files. "
+                f"Add a file suffix, e.g. '{pattern}/**' or '{pattern}/Module.bsl']"
+            ]
         return safe_matches
 
     def tree(path: str = ".", max_depth: int = 3) -> str:
