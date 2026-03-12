@@ -95,7 +95,14 @@ BSL HELPERS available in sandbox:
 
 FILE PATHS depend on format:
   CF:  CommonModules/Name/Ext/Module.bsl
-  EDT: CommonModules/Name/Module.bsl\
+  EDT: CommonModules/Name/Module.bsl
+
+LLM_QUERY TIPS (when llm_query is available):
+  llm_query(prompt, context='')        -- ask LLM to explain/summarize/analyze code
+  llm_query_batched(prompts, context)  -- run multiple prompts in one call
+  - Extract only relevant procedures first, then pass to llm_query — avoid raw full-file dumps
+  - Keep context per call under ~3000 chars; for larger code split into multiple llm_query calls
+  - If llm_query returns empty string, the context was too large — split and retry\
 """
 
 
