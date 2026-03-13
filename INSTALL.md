@@ -134,12 +134,54 @@ RLM_LLM_MODEL=minimax/minimax-m2.5:free
 
 ## 4. Настроить MCP
 
+> **Рекомендация:** используйте **StreamableHTTP** (HTTP-транспорт) вместо stdio. Протокол stdio нестабилен при длительных сессиях — клиенты (Cursor, Kilo Code, Roo Code) могут терять соединение, переподключать сервер или обрывать сессию при таймауте одного вызова. HTTP-транспорт работает как отдельный процесс и не зависит от жизненного цикла клиента.
+
+### Вариант A: StreamableHTTP (рекомендуется)
+
+**1. Запустите сервер** (вручную или как службу — см. ниже):
+```bash
+rlm-tools-bsl --transport streamable-http
+
+# Или с кастомными портом/хостом
+rlm-tools-bsl --transport streamable-http --host 0.0.0.0 --port 3000
+```
+
+> **Примечание:** `.env` загружается из текущего рабочего каталога (cwd). Запускайте команду из папки, где лежит `.env`, или задайте переменные окружения (`RLM_LLM_BASE_URL`, `RLM_LLM_API_KEY`, `RLM_LLM_MODEL`) системно.
+
+Дополнительные параметры: `--host 0.0.0.0` (слушать все интерфейсы), `--port 3000` (другой порт).
+Или через переменные окружения: `RLM_TRANSPORT`, `RLM_HOST`, `RLM_PORT`.
+
+**2. Укажите URL в конфиге клиента** (`.claude.json` / `mcp.json`):
+```json
+{
+  "mcpServers": {
+    "rlm-tools-bsl": {
+      "type": "http",
+      "url": "http://127.0.0.1:9000/mcp"
+    }
+  }
+}
+```
+
+> **Важно:** для большинства AI-клиентов обязателен `"type": "http"`, иначе сервер не будет обнаружен.
+
+**Для Claude Code** можно также добавить командой:
+```bash
+claude mcp add --transport http rlm-tools-bsl http://127.0.0.1:9000/mcp
+```
+
+> **Результат тестирования StreamableHTTP:** транспорт работает стабильно — множество вызовов `rlm_execute` подряд (сканирование 23 000+ BSL-файлов, ~350 сек) без единого обрыва. Это именно тот сценарий, где stdio даёт сбои при долгих сессиях.
+
+### Вариант B: stdio (fallback)
+
+> **Внимание:** stdio подвержен обрывам сессий при долгих операциях. Используйте только если HTTP-транспорт недоступен (например, клиент не поддерживает HTTP MCP).
+
 **Claude Code (глобально):**
 ```bash
 claude mcp add rlm-tools-bsl -- rlm-tools-bsl
 ```
 
-**Или (как для CC, так и для других AI-клиентов ) в `.claude.json` / `mcp.json`:**
+**Или в `.claude.json` / `mcp.json`:**
 ```json
 {
   "mcpServers": {
@@ -177,39 +219,6 @@ claude mcp add rlm-tools-bsl -- rlm-tools-bsl
   }
 }
 ```
-
-**Вариант запуска собранного пакета rlm-tools-bsl на StreamableHTTP (альтернатива stdio — стабильнее для некоторых клиентов):**
-
-Некоторые клиенты (например, Kilo Code / Roo Code) могут некорректно работать с stdio-транспортом — переподключают сервер при ошибках в рантайме. StreamableHTTP решает эту проблему.
-
-1. Запустите собранный ранее пакет как сервер отдельным процессом (предварительно настройте `.env` - при необходимости использовать стороннюю мини-llm для ранжирования ответов внутри `llm_query()`):
-```bash
-rlm-tools-bsl --transport streamable-http
-
-# Или с кастомными портом/хостом
-rlm-tools-bsl --transport streamable-http --host 0.0.0.0 --port 3000
-```
-
-> **Примечание:** `.env` загружается из текущего рабочего каталога (cwd). Запускайте команду из папки, где лежит `.env`, или задайте переменные окружения (`RLM_LLM_BASE_URL`, `RLM_LLM_API_KEY`, `RLM_LLM_MODEL`) системно.
-
-2. Укажите URL в конфиге клиента:
-```json
-{
-  "mcpServers": {
-    "rlm-tools-bsl": {
-      "type": "http",
-      "url": "http://127.0.0.1:9000/mcp"
-    }
-  }
-}
-```
-
-> **Важно:** для многих AI-клиентов обязателен `"type": "http"`, иначе сервер не будет обнаружен.
-
-Дополнительные параметры: `--host 0.0.0.0` (слушать все интерфейсы), `--port 3000` (другой порт).
-Или через переменные окружения: `RLM_TRANSPORT`, `RLM_HOST`, `RLM_PORT`.
-
-> **Результат тестирования StreamableHTTP:** транспорт работает стабильно — множество вызовов `rlm_execute` подряд (сканирование 23 000+ BSL-файлов, ~350 сек) без единого обрыва. Это именно тот сценарий, где stdio мог бы дать сбой при долгой сессии.
 
 ### Запуск как системная служба
 
@@ -260,6 +269,14 @@ uv tool install ".[service]" --force --reinstall
 rlm-tools-bsl service uninstall
 rlm-tools-bsl service install --env /path/to/.env
 rlm-tools-bsl service start
+```
+
+или (с правами администратора):
+```bash
+git pull
+rlm-tools-bsl service uninstall
+uv cache clean rlm-tools-bsl
+PowerShell -ExecutionPolicy Bypass -File .\simple-install.ps1
 ```
 
 Проверьте версию: `rlm-tools-bsl --version`

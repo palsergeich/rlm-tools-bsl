@@ -297,13 +297,19 @@ claude mcp add --transport http rlm-tools-bsl http://127.0.0.1:9000/mcp
 
 Подробная инструкция: **[INSTALL.md](INSTALL.md)** (Python, uv, MCP-конфигурация, разработка).
 
-Быстрый старт (stdio-транспорт, без службы):
+Быстрый старт (HTTP-транспорт, без службы):
 ```bash
 git clone https://github.com/Dach-Coin/rlm-tools-bsl.git
 cd rlm-tools-bsl
 uv tool install . --force
-claude mcp add rlm-tools-bsl -- rlm-tools-bsl
+rlm-tools-bsl --transport streamable-http
 ```
+Затем в `.claude.json` / `mcp.json`:
+```json
+{"mcpServers": {"rlm-tools-bsl": {"type": "http", "url": "http://127.0.0.1:9000/mcp"}}}
+```
+
+> stdio-транспорт (`claude mcp add rlm-tools-bsl -- rlm-tools-bsl`) тоже работает, но подвержен обрывам при длительных сессиях. HTTP рекомендуется.
 
 ## Тестирование на реальных данных
 Выполнено на BSL-кодовой базе доработанной ERP 2.5 (формат выгрузки - конфигуратор)
