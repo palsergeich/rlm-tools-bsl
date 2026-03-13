@@ -219,3 +219,39 @@ def test_read_file_utf8_sig():
         content = helpers["read_file"]("bom.txt")
         assert content == "hello with BOM"
         assert not content.startswith("\ufeff")
+
+
+def test_cache_invalidation_on_rename():
+    """Cache must invalidate when files are renamed even if count stays the same."""
+    from rlm_tools_bsl.cache import load_index, save_index, _paths_hash
+    from rlm_tools_bsl.format_detector import BslFileInfo
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base = tmpdir
+
+        def make_entry(path):
+            return (path, BslFileInfo(
+                relative_path=path,
+                category="CommonModules",
+                object_name="Test",
+                module_type="Module",
+                form_name=None,
+                command_name=None,
+                is_form_module=False,
+            ))
+
+        original = [make_entry("a.bsl"), make_entry("b.bsl")]
+        save_index(base, bsl_count=2, entries=original)
+
+        # Same count, same paths -> should load
+        result = load_index(base, bsl_count=2, bsl_paths=["a.bsl", "b.bsl"])
+        assert result is not None
+        assert len(result) == 2
+
+        # Same count, different paths -> should invalidate
+        result2 = load_index(base, bsl_count=2, bsl_paths=["a.bsl", "c.bsl"])
+        assert result2 is None
+
+        # Different count -> should still invalidate
+        result3 = load_index(base, bsl_count=3, bsl_paths=["a.bsl", "b.bsl", "c.bsl"])
+        assert result3 is None

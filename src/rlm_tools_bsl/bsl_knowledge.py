@@ -120,15 +120,15 @@ def get_strategy(effort: str, format_info) -> str:
     )
 
     if format_info is not None:
-        fmt = getattr(format_info, "format", None)
-        if fmt == "CF":
+        fmt = getattr(format_info, "format_label", None)
+        if fmt == "cf":
             parts.append(
                 "\nFORMAT: CF detected.\n"
                 "Example paths:\n"
                 "  CommonModules/MyModule/Ext/Module.bsl\n"
                 "  Documents/MyDoc/Ext/DocObject.bsl"
             )
-        elif fmt == "EDT":
+        elif fmt == "edt":
             parts.append(
                 "\nFORMAT: EDT detected.\n"
                 "Example paths:\n"

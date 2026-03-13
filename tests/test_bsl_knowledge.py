@@ -116,6 +116,38 @@ def test_strategy_with_format_info():
     assert "CF" in text or "cf" in text or "Ext" in text
 
 
+def test_get_strategy_format_hints():
+    """Format-specific hints must appear for CF and EDT, not for None."""
+    from rlm_tools_bsl.format_detector import FormatInfo, SourceFormat
+
+    cf_info = FormatInfo(
+        primary_format=SourceFormat.CF,
+        root_path="/test",
+        bsl_file_count=100,
+        has_configuration_xml=True,
+        metadata_categories_found=[],
+    )
+    cf_text = get_strategy("medium", cf_info)
+    assert "FORMAT: CF detected." in cf_text
+    assert "Ext/Module.bsl" in cf_text
+
+    edt_info = FormatInfo(
+        primary_format=SourceFormat.EDT,
+        root_path="/test",
+        bsl_file_count=50,
+        has_configuration_xml=False,
+        metadata_categories_found=[],
+    )
+    edt_text = get_strategy("medium", edt_info)
+    assert "FORMAT: EDT detected." in edt_text
+    assert "CommonModules/MyModule/Module.bsl" in edt_text
+    assert "Ext/" not in edt_text.split("FORMAT: EDT detected.")[1]
+
+    none_text = get_strategy("medium", None)
+    assert "FORMAT: CF detected." not in none_text
+    assert "FORMAT: EDT detected." not in none_text
+
+
 # --- Descriptions ---
 
 def test_rlm_start_description():

@@ -222,10 +222,9 @@ def make_helpers(base_path: str) -> tuple[dict, callable]:
 
     def glob_files(pattern: str) -> list[str]:
         """Find files by glob pattern. Returns list of relative path strings."""
-        matches = list(base.glob(pattern))
         safe_matches: list[str] = []
         dir_matches = 0
-        for match in matches:
+        for match in base.glob(pattern):
             if not match.is_file():
                 if match.is_dir():
                     dir_matches += 1

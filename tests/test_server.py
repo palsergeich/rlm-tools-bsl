@@ -363,6 +363,34 @@ def test_main_stdio_does_not_change_settings():
         server.mcp.settings.port = original_port
 
 
+def test_sandboxes_concurrent_access():
+    """Concurrent create/end must not crash with _sandboxes_lock."""
+    import threading
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        open(os.path.join(tmpdir, "a.py"), "w").close()
+
+        errors = []
+
+        def create_and_end():
+            try:
+                result = _rlm_start(path=tmpdir, query="concurrent test")
+                data = json.loads(result)
+                sid = data["session_id"]
+                _rlm_execute(session_id=sid, code="print(1+1)")
+                _rlm_end(session_id=sid)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=create_and_end) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert not errors, f"Concurrent access errors: {errors}"
+
+
 def test_streamable_http_server_starts():
     """Integration: streamable-http server starts and responds to MCP initialize."""
     import socket

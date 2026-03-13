@@ -399,7 +399,7 @@ def make_bsl_helpers(
         all_bsl = glob_files_fn("**/*.bsl")
         bsl_count = len(all_bsl)
 
-        cached = load_index(base_path, bsl_count)
+        cached = load_index(base_path, bsl_count, bsl_paths=all_bsl)
         if cached is not None:
             _index_state.extend(cached)
         else:

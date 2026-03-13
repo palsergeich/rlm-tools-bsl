@@ -31,6 +31,7 @@ session_manager = SessionManager(
 )
 
 _sandboxes: dict[str, Sandbox] = {}
+_sandboxes_lock = threading.Lock()
 
 
 from rlm_tools_bsl.helpers import _SKIP_DIRS, _BINARY_EXTENSIONS
@@ -81,8 +82,9 @@ def _scan_metadata(path: str) -> dict:
 
 def _cleanup_expired_resources() -> None:
     expired_session_ids = session_manager.cleanup_expired()
-    for session_id in expired_session_ids:
-        _sandboxes.pop(session_id, None)
+    with _sandboxes_lock:
+        for session_id in expired_session_ids:
+            _sandboxes.pop(session_id, None)
 
 
 def _install_session_llm_tools(session, sandbox: Sandbox) -> bool:
@@ -172,7 +174,8 @@ def _rlm_start(
     )
     has_llm_tools = _install_session_llm_tools(session, sandbox)
 
-    _sandboxes[session_id] = sandbox
+    with _sandboxes_lock:
+        _sandboxes[session_id] = sandbox
 
     available_functions = [
         "help(task='') -> str  # get recipe for your task, e.g. help('find exports') or help('граф вызовов')",
@@ -226,7 +229,8 @@ def _rlm_execute(
     if not session:
         return json.dumps({"error": f"Session '{session_id}' not found or expired"}, ensure_ascii=False)
 
-    sandbox = _sandboxes.get(session_id)
+    with _sandboxes_lock:
+        sandbox = _sandboxes.get(session_id)
     if not sandbox:
         return json.dumps({"error": f"Sandbox not found for session '{session_id}'"}, ensure_ascii=False)
 
@@ -282,7 +286,8 @@ def _rlm_execute(
 
 def _rlm_end(session_id: str) -> str:
     session_manager.end(session_id)
-    _sandboxes.pop(session_id, None)
+    with _sandboxes_lock:
+        _sandboxes.pop(session_id, None)
     return json.dumps({"success": True}, ensure_ascii=False)
 
 

@@ -41,8 +41,18 @@ def _dict_to_entry(d: dict) -> tuple[str, BslFileInfo]:
     )
 
 
-def load_index(base_path: str, bsl_count: int) -> list[tuple[str, BslFileInfo]] | None:
-    """Load index from disk if version and bsl_count match. Returns None on miss."""
+def _paths_hash(paths: list[str]) -> str:
+    """MD5 hash of sorted relative paths for cache invalidation."""
+    joined = "\n".join(sorted(paths))
+    return hashlib.md5(joined.encode()).hexdigest()
+
+
+def load_index(
+    base_path: str,
+    bsl_count: int,
+    bsl_paths: list[str] | None = None,
+) -> list[tuple[str, BslFileInfo]] | None:
+    """Load index from disk if version, bsl_count, and paths_hash match. Returns None on miss."""
     index_file = _cache_dir(base_path) / "file_index.json"
     try:
         with open(index_file, encoding="utf-8") as f:
@@ -51,6 +61,9 @@ def load_index(base_path: str, bsl_count: int) -> list[tuple[str, BslFileInfo]] 
             return None
         if data.get("bsl_count") != bsl_count:
             return None
+        if bsl_paths is not None and "paths_hash" in data:
+            if data["paths_hash"] != _paths_hash(bsl_paths):
+                return None
         return [_dict_to_entry(e) for e in data["entries"]]
     except (OSError, json.JSONDecodeError, KeyError, TypeError):
         return None
@@ -65,10 +78,12 @@ def save_index(
     try:
         cache_dir = _cache_dir(base_path)
         cache_dir.mkdir(parents=True, exist_ok=True)
+        paths = [p for p, _ in entries]
         data = {
             "version": CACHE_VERSION,
             "base_path": base_path,
             "bsl_count": bsl_count,
+            "paths_hash": _paths_hash(paths),
             "saved_at": time.time(),
             "entries": [_entry_to_dict(p, i) for p, i in entries],
         }
