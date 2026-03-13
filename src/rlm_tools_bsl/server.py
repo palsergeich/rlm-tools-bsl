@@ -92,6 +92,7 @@ def _install_session_llm_tools(session, sandbox: Sandbox) -> bool:
     try:
         base_llm_query = get_llm_query_fn()
         if base_llm_query is None:
+            logger.info("llm_query not available (no LLM provider configured)")
             return False
         base_llm_query_batched = make_llm_query_batched(base_llm_query)
         lock = threading.Lock()
@@ -348,8 +349,8 @@ async def rlm_end(
 def main():
     # Load .env file (next to the executable, cwd, or project root)
     try:
-        from dotenv import load_dotenv
-        load_dotenv(override=True)
+        from dotenv import find_dotenv, load_dotenv
+        load_dotenv(find_dotenv(usecwd=True), override=True)
     except ImportError:
         pass
 

@@ -122,6 +122,10 @@ def get_llm_query_fn():
             logger.warning(f"Could not create Anthropic llm_query: {e}")
             return None
 
+    logger.info(
+        "No LLM provider configured; set RLM_LLM_BASE_URL+RLM_LLM_MODEL "
+        "or ANTHROPIC_API_KEY to enable llm_query"
+    )
     return None
 
 
