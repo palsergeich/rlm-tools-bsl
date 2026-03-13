@@ -31,6 +31,22 @@ uv --version
 
 > **Альтернатива:** если предпочитаете pip, установите его вместе с Python (он идёт в комплекте). Далее в инструкции используется uv, но вместо `uv tool install .` можно использовать `pip install .`
 
+> **Корпоративный прокси / ошибка TLS** (`invalid peer certificate: UnknownIssuer`):
+> корпоративный файрвол подменяет TLS-сертификат, и uv ему не доверяет. Добавьте флаг `--native-tls`, чтобы uv использовал системное хранилище сертификатов Windows:
+> ```bash
+> uv tool install . --force --native-tls
+> ```
+> Чтобы не указывать флаг каждый раз, задайте переменную окружения:
+> ```powershell
+> # PowerShell (постоянно для текущего пользователя)
+> [Environment]::SetEnvironmentVariable("UV_NATIVE_TLS", "true", "User")
+> ```
+> Или добавьте в `pyproject.toml` проекта:
+> ```toml
+> [tool.uv]
+> native-tls = true
+> ```
+
 ## 1. Клонировать репозиторий
 
 ```bash
@@ -45,6 +61,12 @@ uv tool install . --force
 ```
 
 Команда `rlm-tools-bsl` станет доступна глобально. `uv tool install` создаёт изолированное окружение и ставит пакет из текущего каталога — версия подхватывается из `pyproject.toml` автоматически.
+
+> **Если появилось предупреждение** `... is not on your PATH` — выполните:
+> ```bash
+> uv tool update-shell
+> ```
+> Затем **перезапустите терминал** (или откройте новый). Команда `uv tool update-shell` один раз добавляет каталог `~/.local/bin` в системный PATH — повторно запускать не нужно.
 
 <details>
 <summary>Вариант через pip</summary>
@@ -168,6 +190,8 @@ rlm-tools-bsl --transport streamable-http
 rlm-tools-bsl --transport streamable-http --host 0.0.0.0 --port 3000
 ```
 
+> **Примечание:** `.env` загружается из текущего рабочего каталога (cwd). Запускайте команду из папки, где лежит `.env`, или задайте переменные окружения (`RLM_LLM_BASE_URL`, `RLM_LLM_API_KEY`, `RLM_LLM_MODEL`) системно.
+
 2. Укажите URL в конфиге клиента:
 ```json
 {
@@ -220,6 +244,25 @@ rlm-tools-bsl service uninstall
 ```
 
 Конфиг службы сохраняется в `~/.config/rlm-tools-bsl/service.json`. Если `.env` не указан — сервис стартует без него (все параметры берутся из переменных окружения, заданных системно).
+
+### Обновление до новой версии
+
+При обновлении из git необходимо очистить кэш сборки uv, иначе будет установлена старая версия из кэша:
+
+```bash
+git pull
+uv cache clean rlm-tools-bsl
+uv tool install ".[service]" --force --reinstall
+```
+
+Если служба уже была установлена — переустановите её (от администратора):
+```bash
+rlm-tools-bsl service uninstall
+rlm-tools-bsl service install --env /path/to/.env
+rlm-tools-bsl service start
+```
+
+Проверьте версию: `rlm-tools-bsl --version`
 
 ## 5. Проверить работоспособность
 

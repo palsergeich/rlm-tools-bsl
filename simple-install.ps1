@@ -24,17 +24,25 @@
 .PARAMETER EnvFile
     Path to .env file. If omitted, looks for .env in the script directory.
 
+.PARAMETER NativeTls
+    Use system TLS certificates instead of uv's built-in ones.
+    Required in corporate networks where a proxy/firewall replaces TLS certificates.
+
 .EXAMPLE
     PowerShell -ExecutionPolicy Bypass -File .\simple-install.ps1
 
 .EXAMPLE
     PowerShell -ExecutionPolicy Bypass -File .\simple-install.ps1 -EnvFile "C:\Users\me\.env" -Port 9000
+
+.EXAMPLE
+    PowerShell -ExecutionPolicy Bypass -File .\simple-install.ps1 -NativeTls
 #>
 
 param(
     [string]$BindHost = "127.0.0.1",
     [int]$Port = 9000,
-    [string]$EnvFile = ""
+    [string]$EnvFile = "",
+    [switch]$NativeTls
 )
 
 Set-StrictMode -Version Latest
@@ -62,10 +70,22 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
 
 Write-Host ""
 Write-Host "=== Step 1: Install rlm-tools-bsl ===" -ForegroundColor Cyan
-uv tool install "${PSScriptRoot}[service]" --force
+$uvInstallArgs = @("tool", "install", "${PSScriptRoot}[service]", "--force")
+if ($NativeTls) { $uvInstallArgs += "--native-tls" }
+& uv @uvInstallArgs
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "Installation failed."
+    Write-Error "Installation failed. If you see TLS certificate errors, re-run with -NativeTls flag."
     exit 1
+}
+
+# Ensure rlm-tools-bsl is in PATH for this session
+if (-not (Get-Command rlm-tools-bsl -ErrorAction SilentlyContinue)) {
+    Write-Host "Adding uv tool bin directory to PATH..." -ForegroundColor Yellow
+    $uvBinDir = (& uv tool dir --bin 2>$null)
+    if ($uvBinDir -and (Test-Path $uvBinDir)) {
+        $env:PATH = "$uvBinDir;$env:PATH"
+    }
+    & uv tool update-shell 2>$null
 }
 
 Write-Host ""

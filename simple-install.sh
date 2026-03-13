@@ -15,6 +15,7 @@
 #   ./simple-install.sh                    # auto-detect .env in script dir
 #   ./simple-install.sh /path/to/.env      # explicit .env path
 #   RLM_PORT=3000 ./simple-install.sh      # custom port
+#   UV_NATIVE_TLS=true ./simple-install.sh # corporate proxy with TLS replacement
 #
 # After install, to enable autostart without login:
 #   loginctl enable-linger $USER
@@ -56,7 +57,21 @@ fi
 # --- Step 1: Install ---
 echo ""
 echo "=== Step 1: Install rlm-tools-bsl ==="
-uv tool install "${SCRIPT_DIR}[service]" --force
+UV_EXTRA_ARGS=()
+if [ "${UV_NATIVE_TLS:-}" = "true" ]; then
+    UV_EXTRA_ARGS+=("--native-tls")
+fi
+uv tool install "${SCRIPT_DIR}[service]" --force "${UV_EXTRA_ARGS[@]}"
+
+# Ensure rlm-tools-bsl is in PATH for this session
+if ! command -v rlm-tools-bsl &>/dev/null; then
+    echo "Adding uv tool bin directory to PATH..."
+    UV_BIN_DIR="$(uv tool dir --bin 2>/dev/null || true)"
+    if [ -n "$UV_BIN_DIR" ] && [ -d "$UV_BIN_DIR" ]; then
+        export PATH="$UV_BIN_DIR:$PATH"
+    fi
+    uv tool update-shell 2>/dev/null || true
+fi
 
 # --- Step 2: Register service ---
 echo ""

@@ -1,4 +1,5 @@
 import argparse
+import importlib.metadata
 import json
 import logging
 import os
@@ -353,6 +354,11 @@ def main():
         pass
 
     parser = argparse.ArgumentParser(description="rlm-tools-bsl MCP server")
+    parser.add_argument(
+        "--version", "-V",
+        action="version",
+        version=f"%(prog)s {importlib.metadata.version('rlm-tools-bsl')}",
+    )
     parser.add_argument(
         "--transport",
         choices=["stdio", "streamable-http"],

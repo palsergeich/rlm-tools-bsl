@@ -32,6 +32,7 @@ class RlmWindowsService(win32serviceutil.ServiceFramework):
         self._proc: subprocess.Popen | None = None
         self._thread = threading.Thread(target=self._run_server, daemon=True)
         self._thread.start()
+        self.ReportServiceStatus(win32service.SERVICE_RUNNING)
         win32event.WaitForSingleObject(self._stop_event, win32event.INFINITE)
 
     def _run_server(self) -> None:
@@ -123,6 +124,34 @@ def install(host: str, port: int, env_file: str | None) -> None:
     # site-packages of the current (uv tool) env — needed for PYTHONPATH in registry
     # _service_win.py lives at  <site-packages>/rlm_tools_bsl/_service_win.py
     site_packages = str(pathlib.Path(__file__).parent.parent)
+
+    # pythonservice.exe needs several DLLs next to it that aren't on the
+    # DLL search path in an isolated uv tool environment:
+    #   - pywintypes*.dll, pythoncom*.dll  (pywin32, in pywin32_system32/)
+    #   - python3.dll, python3XX.dll       (Python runtime, in sys.prefix or exe dir)
+    # site_packages = .../Lib/site-packages, pythonservice.exe is at env root (2 levels up)
+    svc_dir = pathlib.Path(site_packages).parent.parent
+    dlls_to_copy: list[pathlib.Path] = []
+
+    # pywin32 DLLs
+    pywin32_sys32 = pathlib.Path(site_packages) / "pywin32_system32"
+    if pywin32_sys32.is_dir():
+        dlls_to_copy.extend(pywin32_sys32.glob("*.dll"))
+
+    # Python runtime DLLs (python3.dll + python3XX.dll)
+    # In venvs/uv tool envs, DLLs are in base_prefix, not prefix
+    for py_dir in dict.fromkeys([
+        pathlib.Path(sys.base_prefix),
+        pathlib.Path(sys.prefix),
+        pathlib.Path(sys.executable).resolve().parent,
+    ]):
+        dlls_to_copy.extend(py_dir.glob("python3*.dll"))
+
+    for dll in dlls_to_copy:
+        dest = svc_dir / dll.name
+        if not dest.exists():
+            shutil.copy2(dll, dest)
+            print(f"Copied {dll.name} -> {svc_dir}")
 
     save_config(host, port, env_file, exe_path=exe_path)
     try:
