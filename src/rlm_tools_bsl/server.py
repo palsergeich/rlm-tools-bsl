@@ -5,7 +5,10 @@ import logging
 import os
 import pathlib
 import threading
+import time
 from typing import Annotated, Literal
+
+import anyio
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
@@ -171,6 +174,8 @@ def _rlm_start(
     execution_timeout_seconds: int = 45,
     include_metadata: bool = False,
 ) -> str:
+    t0 = time.monotonic()
+    logger.info("rlm_start: path=%s effort=%s include_metadata=%s", path, effort, include_metadata)
     _cleanup_expired_resources()
 
     resolved = str(pathlib.Path(path).resolve())
@@ -212,21 +217,36 @@ def _rlm_start(
     if not session:
         return json.dumps({"error": f"Failed to create session for path: {path}"}, ensure_ascii=False)
 
-    metadata = _scan_metadata(resolved) if include_metadata else {}
+    logger.info("rlm_start: session=%s created for path=%s", session_id, resolved)
 
-    format_info = detect_format(resolved)
-    strategy = get_strategy(effort, format_info)
+    try:
+        metadata = _scan_metadata(resolved) if include_metadata else {}
 
-    sandbox = Sandbox(
-        base_path=resolved,
-        max_output_chars=max_output_chars,
-        execution_timeout_seconds=execution_timeout_seconds,
-        format_info=format_info,
-    )
-    has_llm_tools = _install_session_llm_tools(session, sandbox)
+        format_info = detect_format(resolved)
+        logger.info(
+            "rlm_start: session=%s format=%s bsl_files=%d",
+            session_id, format_info.format_label, format_info.bsl_file_count,
+        )
+        strategy = get_strategy(effort, format_info)
 
-    with _sandboxes_lock:
-        _sandboxes[session_id] = sandbox
+        sandbox = Sandbox(
+            base_path=resolved,
+            max_output_chars=max_output_chars,
+            execution_timeout_seconds=execution_timeout_seconds,
+            format_info=format_info,
+        )
+        has_llm_tools = _install_session_llm_tools(session, sandbox)
+        logger.info("rlm_start: session=%s sandbox ready, llm_tools=%s", session_id, has_llm_tools)
+
+        with _sandboxes_lock:
+            _sandboxes[session_id] = sandbox
+    except Exception as e:
+        logger.error("rlm_start: session=%s failed: %s", session_id, e, exc_info=True)
+        session_manager.end(session_id)
+        return json.dumps(
+            {"error": f"Session init failed: {type(e).__name__}: {e}"},
+            ensure_ascii=False,
+        )
 
     available_functions = [
         "help(task='') -> str  # get recipe for your task, e.g. help('find exports') or help('граф вызовов')",
@@ -266,6 +286,7 @@ def _rlm_start(
         "available_functions": available_functions,
         "strategy": strategy,
     }
+    logger.info("rlm_start: session=%s completed in %.2fs", session_id, time.monotonic() - t0)
     return json.dumps(response, ensure_ascii=False)
 
 
@@ -275,6 +296,8 @@ def _rlm_execute(
     detail_level: Literal["compact", "usage", "full"] = "compact",
     max_new_variables: int = 20,
 ) -> str:
+    t0 = time.monotonic()
+    logger.info("rlm_execute: session=%s code_len=%d", session_id, len(code))
     _cleanup_expired_resources()
     session = session_manager.get(session_id)
     if not session:
@@ -295,6 +318,12 @@ def _rlm_execute(
 
     session.execute_calls += 1
     result = sandbox.execute(code)
+
+    logger.info(
+        "rlm_execute: session=%s call=%d/%d error=%s elapsed=%.2fs",
+        session_id, session.execute_calls, session.max_execute_calls,
+        bool(result.error), time.monotonic() - t0,
+    )
 
     response: dict = {
         "stdout": result.stdout,
@@ -336,6 +365,7 @@ def _rlm_execute(
 
 
 def _rlm_end(session_id: str) -> str:
+    logger.info("rlm_end: session=%s", session_id)
     session_manager.end(session_id)
     with _sandboxes_lock:
         _sandboxes.pop(session_id, None)
@@ -354,15 +384,17 @@ async def rlm_start(
     include_metadata: Annotated[bool, Field(description="Scan directory and include file counts/types in response (slow on large configs, disabled by default)")] = False,
 ) -> str:
     """Start a BSL code exploration session on a 1C codebase. Returns JSON with session_id. Then call rlm_execute(session_id, code) where code is Python that calls helper functions and uses print() to output results. IMPORTANT: For large 1C configs (23K+ files), NEVER grep on broad paths -- use find_module() first."""
-    return _rlm_start(
-        path=path,
-        query=query,
-        effort=effort,
-        max_output_chars=max_output_chars,
-        max_llm_calls=max_llm_calls,
-        max_execute_calls=max_execute_calls,
-        execution_timeout_seconds=execution_timeout_seconds,
-        include_metadata=include_metadata,
+    return await anyio.to_thread.run_sync(
+        lambda: _rlm_start(
+            path=path,
+            query=query,
+            effort=effort,
+            max_output_chars=max_output_chars,
+            max_llm_calls=max_llm_calls,
+            max_execute_calls=max_execute_calls,
+            execution_timeout_seconds=execution_timeout_seconds,
+            include_metadata=include_metadata,
+        )
     )
 
 
@@ -384,7 +416,9 @@ async def rlm_execute(
     )] = 20,
 ) -> str:
     """Execute Python code in the BSL sandbox. The 'code' parameter is Python code. Call helper functions and use print() to see results. Variables persist between calls. Example: code="modules = find_module('MyModule')\\nfor m in modules:\\n    print(m['path'])". BSL helpers: help, find_module, find_by_type, extract_procedures, find_exports, safe_grep, read_procedure, find_callers, find_callers_context, parse_object_xml. Standard: read_file, read_files, grep, grep_summary, grep_read, glob_files, tree. CRITICAL: grep on path='.' ALWAYS times out on large 1C configs. Use find_module() first."""
-    return _rlm_execute(session_id, code, detail_level, max_new_variables)
+    return await anyio.to_thread.run_sync(
+        lambda: _rlm_execute(session_id, code, detail_level, max_new_variables)
+    )
 
 
 @mcp.tool()
@@ -392,7 +426,34 @@ async def rlm_end(
     session_id: Annotated[str, Field(description="Session ID to end")],
 ) -> str:
     """End an RLM exploration session and free resources."""
-    return _rlm_end(session_id)
+    return await anyio.to_thread.run_sync(lambda: _rlm_end(session_id))
+
+
+def _setup_file_logging():
+    """Add rotating file handler for HTTP transport mode."""
+    from logging.handlers import RotatingFileHandler
+
+    # Use RLM_CONFIG_FILE-derived path if set (Windows service / Session 0)
+    config_override = os.environ.get("RLM_CONFIG_FILE")
+    if config_override:
+        log_dir = pathlib.Path(config_override).parent / "logs"
+    else:
+        log_dir = pathlib.Path.home() / ".config" / "rlm-tools-bsl" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "server.log"
+
+    handler = RotatingFileHandler(
+        log_path,
+        maxBytes=5 * 1024 * 1024,  # 5 MB
+        backupCount=3,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    logging.getLogger().addHandler(handler)
+    logger.info("File logging enabled: %s", log_path)
 
 
 def main():
@@ -447,6 +508,7 @@ def main():
         return
 
     if args.transport != "stdio":
+        _setup_file_logging()
         mcp.settings.host = args.host
         mcp.settings.port = args.port
 

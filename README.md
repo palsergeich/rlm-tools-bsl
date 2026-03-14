@@ -238,6 +238,61 @@ RLM не конкурирует с RAG. Это разные инструмент
 
 BSL-функционал добавлен поверх, не ломая исходную механику.
 
+## Настройка llm_query (опционально)
+
+В песочнице есть хелпер `llm_query(prompt, context)` — он вызывает «маленькую» LLM прямо из `rlm_execute`, не возвращаясь в основной контекст. Это полезно, когда агент нашёл много данных и хочет классифицировать или суммировать их на стороне сервера.
+
+Поддерживаются два варианта подключения LLM-провайдера (достаточно одного):
+
+### OpenAI-совместимый endpoint (OpenRouter, LiteLLM, Ollama, vLLM)
+
+```bash
+# Windows
+set RLM_LLM_BASE_URL=http://localhost:11434/v1
+set RLM_LLM_API_KEY=
+set RLM_LLM_MODEL=qwen2.5:7b
+
+# Linux/macOS
+export RLM_LLM_BASE_URL=http://localhost:11434/v1
+export RLM_LLM_API_KEY=
+export RLM_LLM_MODEL=qwen2.5:7b
+```
+
+- `RLM_LLM_BASE_URL` — базовый URL endpoint'а (обязателен для этого варианта)
+- `RLM_LLM_MODEL` — имя модели (обязателен)
+- `RLM_LLM_API_KEY` — API-ключ (может быть пустым, например для Ollama)
+
+Требует пакет `openai` (входит в основные зависимости, ставится автоматически).
+
+### Anthropic API
+
+```bash
+# Windows
+set ANTHROPIC_API_KEY=sk-ant-api03-...
+
+# Linux/macOS
+export ANTHROPIC_API_KEY=sk-ant-api03-...
+```
+
+Ключ получается на [console.anthropic.com](https://console.anthropic.com) → API Keys. По умолчанию используется модель Claude Haiku; переопределяется через `RLM_SUB_MODEL`.
+
+> Если заданы и `RLM_LLM_BASE_URL`, и `ANTHROPIC_API_KEY` — приоритет у OpenAI-совместимого endpoint'а.
+
+**Как передать переменные окружения:**
+
+- **stdio** — через секцию `env` в конфиге MCP (см. INSTALL.md)
+- **StreamableHTTP** — через файл `.env` рядом с рабочим каталогом, откуда запускается сервер. Сервер вызывает `load_dotenv(override=True)` при старте
+
+Пример `.env`:
+```
+RLM_LLM_BASE_URL=https://api.kilo.ai/api/gateway
+RLM_LLM_API_KEY=your-api-key
+RLM_LLM_MODEL=minimax/minimax-m2.5:free
+```
+
+**Без настройки LLM всё остальное работает нормально** — `find_module`, `grep`, `read_file`, `parse_object_xml` и все прочие хелперы не требуют API-ключа. Просто `llm_query()` будет недоступен.
+Базовая функциональность rlm-tools-bsl не пострадает, просто для объяснения того как работает тот или иной механизм (в процессе анализа исходников) - основная модель-анализатор получит в отдельных сложных случаях неранжированный ответ и потратит больше токенов на поиск сути.
+
 ## Быстрая установка и старт
 
 **Требования:** Python 3.10+, uv. LLM-ключи — опциональны (без них работает базовый функционал).
@@ -248,7 +303,7 @@ BSL-функционал добавлен поверх, не ломая исхо
 git clone https://github.com/Dach-Coin/rlm-tools-bsl.git
 cd rlm-tools-bsl
 
-# Опционально: создайте .env с LLM-ключами (см. INSTALL.md раздел 3)
+# Опционально: создайте .env с LLM-ключами (см. выше)
 
 PowerShell -ExecutionPolicy Bypass -File .\simple-install.ps1
 ```

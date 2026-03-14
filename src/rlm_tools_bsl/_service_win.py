@@ -6,16 +6,20 @@ Architecture:
   as a child process instead of importing the server directly, so the HTTP
   server always runs in its own isolated Python environment.
 """
+import datetime
 import os
 import pathlib
 import subprocess
 import threading
+import time
+import urllib.error
+import urllib.request
 
 import win32event
 import win32service
 import win32serviceutil
 
-from rlm_tools_bsl.service import CONFIG_FILE, load_config, save_config
+from rlm_tools_bsl.service import CONFIG_FILE, _config_path, load_config, save_config
 
 SERVICE_NAME = "rlm-tools-bsl"
 SERVICE_DISPLAY = "RLM Tools BSL (MCP HTTP Server)"
@@ -38,15 +42,71 @@ class RlmWindowsService(win32serviceutil.ServiceFramework):
     def _run_server(self) -> None:
         cfg = load_config()
         exe = cfg.get("exe_path") or "rlm-tools-bsl"
+        host = cfg["host"]
+        port = str(cfg["port"])
+        health_url = f"http://{host}:{port}/mcp"
+
         env = os.environ.copy()
         env_file = cfg.get("env_file")
         if env_file and pathlib.Path(env_file).exists():
             _load_env_file(env_file, env)
-        self._proc = subprocess.Popen(
-            [exe, "--transport", "streamable-http", "--host", cfg["host"], "--port", str(cfg["port"])],
-            env=env,
-        )
-        self._proc.wait()
+
+        log_dir = _config_path().parent / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "server.log"
+
+        max_restarts = 5
+        restart_count = 0
+
+        while restart_count <= max_restarts:
+            log_file = open(log_path, "a", encoding="utf-8", buffering=1)
+            _log_watchdog(log_file, "Starting subprocess: %s", exe)
+            self._proc = subprocess.Popen(
+                [exe, "--transport", "streamable-http", "--host", host, "--port", port],
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+
+            # Grace period for startup
+            time.sleep(5)
+
+            # Health-check loop: check every 30s, poll stop_event every 1s
+            health_failed = False
+            while self._proc.poll() is None:
+                for _ in range(30):
+                    if win32event.WaitForSingleObject(self._stop_event, 1000) != win32event.WAIT_TIMEOUT:
+                        log_file.close()
+                        return  # SvcStop was called
+                    if self._proc.poll() is not None:
+                        break
+                else:
+                    if not _check_health(health_url):
+                        _log_watchdog(log_file, "Health check failed, terminating process")
+                        self._proc.terminate()
+                        try:
+                            self._proc.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            self._proc.kill()
+                        health_failed = True
+
+                if health_failed:
+                    break
+
+            exit_code = self._proc.returncode
+            log_file.close()
+
+            if exit_code == 0 and not health_failed:
+                break  # clean shutdown
+
+            restart_count += 1
+            if restart_count <= max_restarts:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    _log_watchdog(
+                        f, "Process exited (code=%s health_fail=%s), restarting (%d/%d)...",
+                        exit_code, health_failed, restart_count, max_restarts,
+                    )
+                time.sleep(5)
 
     def SvcStop(self) -> None:
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
@@ -74,6 +134,33 @@ def _load_env_file(path: str, env: dict) -> None:
                 env.setdefault(k, v)
     except OSError:
         pass
+
+
+def _check_health(url: str) -> bool:
+    """Check if MCP server process is alive (any HTTP response = alive)."""
+    try:
+        req = urllib.request.Request(
+            url,
+            data=b'{"jsonrpc":"2.0","method":"ping","id":0}',
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return True
+    except urllib.error.HTTPError:
+        # Any HTTP response (including 4xx like 406) means server is alive
+        return True
+    except Exception:
+        # Connection refused, timeout, etc. = server is down
+        return False
+
+
+def _log_watchdog(f, msg: str, *args) -> None:
+    """Write a timestamped watchdog message to the log file."""
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    text = msg % args if args else msg
+    f.write(f"[watchdog {ts}] {text}\n")
+    f.flush()
 
 
 def _set_service_environment(service_name: str, site_packages: str, config_file: str) -> None:
