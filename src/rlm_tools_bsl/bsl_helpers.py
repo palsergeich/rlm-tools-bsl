@@ -167,12 +167,17 @@ def _parse_cf_xml(root) -> dict:
         "synonym": _cf_find_synonym(props, ns) if props is not None else "",
     }
 
-    attributes = _cf_parse_attributes(meta_el, ns)
+    # In CF format, Attribute/TabularSection/Dimension/Resource elements
+    # can be either direct children of meta_el OR inside <ChildObjects>.
+    child_objects = meta_el.find("md:ChildObjects", ns)
+    search_el = child_objects if child_objects is not None else meta_el
+
+    attributes = _cf_parse_attributes(search_el, ns)
     if attributes:
         result["attributes"] = attributes
 
     tab_sections = []
-    for ts_el in meta_el.findall("md:TabularSection", ns):
+    for ts_el in search_el.findall("md:TabularSection", ns):
         ts_props = ts_el.find("md:Properties", ns)
         ts_name = _xml_find_text(ts_props, "md:Name", ns) if ts_props is not None else ""
         ts_synonym = _cf_find_synonym(ts_props, ns) if ts_props is not None else ""
@@ -182,7 +187,7 @@ def _parse_cf_xml(root) -> dict:
         result["tabular_sections"] = tab_sections
 
     dimensions = []
-    for dim_el in meta_el.findall("md:Dimension", ns):
+    for dim_el in search_el.findall("md:Dimension", ns):
         dim_props = dim_el.find("md:Properties", ns)
         if dim_props is not None:
             dimensions.append({
@@ -194,7 +199,7 @@ def _parse_cf_xml(root) -> dict:
         result["dimensions"] = dimensions
 
     resources = []
-    for res_el in meta_el.findall("md:Resource", ns):
+    for res_el in search_el.findall("md:Resource", ns):
         res_props = res_el.find("md:Properties", ns)
         if res_props is not None:
             resources.append({
@@ -767,6 +772,202 @@ def make_bsl_helpers(
         content = read_file_fn(path)
         return parse_metadata_xml(content)
 
+    # ── Composite helpers (wrappers over existing functions) ────────
+
+    def analyze_subsystem(name: str) -> dict:
+        """Find a subsystem by name, parse its XML composition,
+        classify objects as custom (non-standard prefix) or standard.
+
+        Returns: dict with subsystems_found, subsystems list."""
+        patterns = [
+            f"**/Subsystems/**/*{name}*",
+            f"**/Subsystems/*{name}*",
+            f"**/*{name}*.mdo",
+        ]
+        found_files: list[str] = []
+        for p in patterns:
+            found_files.extend(glob_files_fn(p))
+
+        subsystem_files = list(dict.fromkeys(
+            f for f in found_files
+            if "Subsystem" in f and (f.endswith(".xml") or f.endswith(".mdo"))
+        ))
+
+        if not subsystem_files:
+            return {
+                "error": f"Подсистема '{name}' не найдена",
+                "hint": "Попробуйте glob_files('**/Subsystems/**') для просмотра всех подсистем",
+            }
+
+        results = []
+        for sf in subsystem_files:
+            try:
+                meta = parse_object_xml(sf)
+            except Exception:
+                continue
+            if not meta or meta.get("object_type") != "Subsystem":
+                continue
+
+            content = meta.get("content", [])
+            custom_objects = []
+            standard_objects = []
+            for item in content:
+                parts = item.split(".", 1)
+                obj_type = parts[0] if parts else ""
+                obj_name = parts[1] if len(parts) > 1 else item
+                is_custom = bool(obj_name) and obj_name[0].islower()
+                entry = {"type": obj_type, "name": obj_name, "is_custom": is_custom}
+                if is_custom:
+                    custom_objects.append(entry)
+                else:
+                    standard_objects.append(entry)
+
+            results.append({
+                "file": sf,
+                "name": meta.get("name", ""),
+                "synonym": meta.get("synonym", ""),
+                "total_objects": len(content),
+                "custom_objects": custom_objects,
+                "standard_objects": standard_objects,
+                "raw_content": content,
+            })
+
+        return {"subsystems_found": len(results), "subsystems": results}
+
+    _CUSTOM_PREFIXES_DEFAULT = ["лтх", "бг", "кэ", "мп"]
+
+    def find_custom_modifications(
+        object_name: str,
+        custom_prefixes: list[str] | None = None,
+    ) -> dict:
+        """Find all non-standard (custom) modifications in an object's modules:
+        procedures with custom prefix, #Область ИРИС regions, custom XML attributes.
+
+        Returns: dict with modifications list and custom_attributes."""
+        prefixes = custom_prefixes or _CUSTOM_PREFIXES_DEFAULT
+
+        modules = find_module(object_name)
+        exact = [m for m in modules if (m.get("object_name") or "").lower() == object_name.lower()]
+        if not exact:
+            exact = modules
+        if not exact:
+            return {"error": f"Объект '{object_name}' не найден"}
+
+        def _match_prefix(s: str) -> bool:
+            sl = s.lower()
+            return any(sl.startswith(p.lower()) for p in prefixes)
+
+        modifications = []
+        for mod in exact:
+            path = mod["path"]
+            try:
+                procs = extract_procedures(path)
+            except Exception:
+                continue
+
+            custom_procs = [p for p in procs if _match_prefix(p["name"])]
+
+            custom_regions: list[dict] = []
+            try:
+                content = read_file_fn(path)
+                for i, line in enumerate(content.splitlines(), 1):
+                    stripped = line.strip()
+                    if stripped.startswith("#") and "Область" in stripped:
+                        region_name = stripped.split("Область", 1)[1].strip()
+                        if _match_prefix(region_name) or region_name.upper() == "ИРИС":
+                            custom_regions.append({"name": region_name, "line": i})
+            except Exception:
+                pass
+
+            if custom_procs or custom_regions:
+                modifications.append({
+                    "path": path,
+                    "module_type": mod.get("module_type", ""),
+                    "form_name": mod.get("form_name"),
+                    "total_procedures": len(procs),
+                    "custom_procedures": custom_procs,
+                    "custom_regions": custom_regions,
+                })
+
+        custom_attributes: list[dict] = []
+        category = exact[0].get("category", "")
+        obj_name = exact[0].get("object_name", "")
+        if category and obj_name:
+            for xp in [f"{category}/{obj_name}.xml", f"{category}/{obj_name}.mdo", f"{category}/{obj_name}/{obj_name}.mdo"]:
+                try:
+                    meta = parse_object_xml(xp)
+                    for attr in meta.get("attributes", []):
+                        if _match_prefix(attr["name"]):
+                            custom_attributes.append(attr)
+                    for ts in meta.get("tabular_sections", []):
+                        if _match_prefix(ts["name"]):
+                            custom_attributes.append({
+                                "name": ts["name"],
+                                "type": "TabularSection",
+                                "synonym": ts.get("synonym", ""),
+                            })
+                    break
+                except Exception:
+                    continue
+
+        return {
+            "object_name": object_name,
+            "modules_analyzed": len(exact),
+            "modifications": modifications,
+            "custom_attributes": custom_attributes,
+        }
+
+    def analyze_object(name: str) -> dict:
+        """Full object profile in one call: XML metadata + all modules + procedures + exports.
+
+        Returns: dict with name, category, metadata, modules."""
+        modules = find_module(name)
+        exact = [m for m in modules if (m.get("object_name") or "").lower() == name.lower()]
+        if not exact:
+            exact = modules[:20]
+        if not exact:
+            return {"error": f"Объект '{name}' не найден"}
+
+        category = exact[0].get("category", "")
+        obj_name = exact[0].get("object_name", "")
+
+        metadata: dict = {}
+        if category and obj_name:
+            for xp in [f"{category}/{obj_name}.xml", f"{category}/{obj_name}.mdo", f"{category}/{obj_name}/{obj_name}.mdo"]:
+                try:
+                    metadata = parse_object_xml(xp)
+                    break
+                except Exception:
+                    continue
+
+        module_details = []
+        for mod in exact:
+            path = mod["path"]
+            try:
+                procs = extract_procedures(path)
+                exports = [p for p in procs if p.get("is_export")]
+            except Exception:
+                procs, exports = [], []
+
+            module_details.append({
+                "path": path,
+                "module_type": mod.get("module_type", ""),
+                "form_name": mod.get("form_name"),
+                "procedures_count": len(procs),
+                "exports_count": len(exports),
+                "procedures": procs,
+                "exports": exports,
+            })
+
+        return {
+            "name": obj_name,
+            "category": category,
+            "metadata": metadata,
+            "modules": module_details,
+        }
+
+    # ── Help recipes ─────────────────────────────────────────────
+
     _help_recipes: dict[str, dict] = {
         "exports": {
             "keywords": ["export", "экспорт", "find_exports", "процедур", "функци"],
@@ -833,6 +1034,49 @@ def make_bsl_helpers(
                 "  print(content[:2000])"
             ),
         },
+        "subsystem": {
+            "keywords": ["subsystem", "подсистем", "состав подсистем"],
+            "text": (
+                "ANALYZE SUBSYSTEM:\n"
+                "  result = analyze_subsystem('Спецодежда')\n"
+                "  for sub in result.get('subsystems', []):\n"
+                "      print(f\"Подсистема: {sub['name']} ({sub['synonym']})\")\n"
+                "      print(f\"Нетиповых: {len(sub['custom_objects'])}, типовых: {len(sub['standard_objects'])}\")\n"
+                "      for obj in sub['custom_objects']:\n"
+                "          print(f\"  [нетип] {obj['type']}.{obj['name']}\")\n"
+                "      for obj in sub['standard_objects']:\n"
+                "          print(f\"  [типов] {obj['type']}.{obj['name']}\")"
+            ),
+        },
+        "custom": {
+            "keywords": ["custom", "нетипов", "доработк", "модификац",
+                         "modification", "ИРИС", "ирис"],
+            "text": (
+                "FIND CUSTOM MODIFICATIONS:\n"
+                "  result = find_custom_modifications('ВнутреннееПотребление')\n"
+                "  for mod in result.get('modifications', []):\n"
+                "      print(f\"Модуль: {mod['path']}\")\n"
+                "      for p in mod['custom_procedures']:\n"
+                "          print(f\"  {p['type']} {p['name']} (стр.{p['line']})\")\n"
+                "      for r in mod['custom_regions']:\n"
+                "          print(f\"  #Область {r['name']} (стр.{r['line']})\")\n"
+                "  for attr in result.get('custom_attributes', []):\n"
+                "      print(f\"Реквизит: {attr['name']} ({attr.get('synonym', '')})\")"
+            ),
+        },
+        "profile": {
+            "keywords": ["profile", "профиль", "обзор", "overview",
+                         "analyze_object"],
+            "text": (
+                "OBJECT PROFILE:\n"
+                "  result = analyze_object('АвансовыйОтчет')\n"
+                "  meta = result.get('metadata', {})\n"
+                "  print(f\"Объект: {result['name']} ({meta.get('synonym', '')})\")\n"
+                "  print(f\"Реквизитов: {len(meta.get('attributes', []))}\")\n"
+                "  for m in result.get('modules', []):\n"
+                "      print(f\"  {m['module_type']}: {m['procedures_count']} проц, {m['exports_count']} эксп\")"
+            ),
+        },
     }
 
     def bsl_help(task: str = "") -> str:
@@ -870,4 +1114,7 @@ def make_bsl_helpers(
         "find_callers": find_callers,
         "find_callers_context": find_callers_context,
         "parse_object_xml": parse_object_xml,
+        "analyze_subsystem": analyze_subsystem,
+        "find_custom_modifications": find_custom_modifications,
+        "analyze_object": analyze_object,
     }

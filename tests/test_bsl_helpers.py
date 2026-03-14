@@ -709,3 +709,140 @@ def test_find_callers_context_pagination():
         else:
             # Only 1 file contains it — pagination not applicable, still valid
             assert meta1["has_more"] is False
+
+
+# --- Composite helpers ---
+
+
+SUBSYSTEM_CF_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses"
+                xmlns:v8="http://v8.1c.ru/8.1/data/core"
+                xmlns:xr="http://v8.1c.ru/8.3/xcf/readable">
+<Subsystem>
+<Properties>
+<Name>лтхСпецодежда</Name>
+<Synonym><v8:item><v8:lang>ru</v8:lang><v8:content>Спецодежда</v8:content></v8:item></Synonym>
+<Content>
+<xr:Item>Catalog.лтхВидыСпецодежды</xr:Item>
+<xr:Item>Document.ВнутреннееПотребление</xr:Item>
+<xr:Item>Document.лтхЗаявкаНаВыдачуСпецодежды</xr:Item>
+</Content>
+</Properties>
+</Subsystem>
+</MetaDataObject>
+"""
+
+
+def _make_subsystem_fixture(tmpdir):
+    """Create fixture with a subsystem XML."""
+    # Add subsystem XML to existing fixture
+    sub_dir = os.path.join(
+        tmpdir, "Subsystems", "Администрирование", "Subsystems", "лтхСпецодежда",
+    )
+    os.makedirs(sub_dir, exist_ok=True)
+    with open(os.path.join(sub_dir, "лтхСпецодежда.xml"), "w", encoding="utf-8") as f:
+        f.write(SUBSYSTEM_CF_XML)
+    # Now create the rest of the fixture (BSL files, Configuration.xml)
+    helpers, resolve_safe = make_helpers(tmpdir)
+    # Create CF structure manually (avoid _create_cf_fixture which fails on existing dirs)
+    mod_dir = os.path.join(tmpdir, "CommonModules", "МойМодуль", "Ext")
+    os.makedirs(mod_dir, exist_ok=True)
+    with open(os.path.join(mod_dir, "Module.bsl"), "w", encoding="utf-8") as f:
+        f.write(BSL_CODE)
+    doc_dir = os.path.join(tmpdir, "Documents", "АвансовыйОтчет", "Ext")
+    os.makedirs(doc_dir, exist_ok=True)
+    with open(os.path.join(doc_dir, "ObjectModule.bsl"), "w", encoding="utf-8") as f:
+        f.write(BSL_CALLER_CODE)
+    with open(os.path.join(tmpdir, "Configuration.xml"), "w") as f:
+        f.write("<Configuration/>")
+    format_info = detect_format(tmpdir)
+    bsl = make_bsl_helpers(
+        base_path=tmpdir,
+        resolve_safe=resolve_safe,
+        read_file_fn=helpers["read_file"],
+        grep_fn=helpers["grep"],
+        glob_files_fn=helpers["glob_files"],
+        format_info=format_info,
+    )
+    return bsl, helpers
+
+
+def test_analyze_subsystem_found():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bsl, _ = _make_subsystem_fixture(tmpdir)
+        result = bsl["analyze_subsystem"]("Спецодежда")
+        assert result["subsystems_found"] >= 1
+        sub = result["subsystems"][0]
+        assert sub["synonym"] == "Спецодежда"
+        assert len(sub["custom_objects"]) >= 1
+        custom_names = [o["name"] for o in sub["custom_objects"]]
+        assert "лтхВидыСпецодежды" in custom_names
+        standard_names = [o["name"] for o in sub["standard_objects"]]
+        assert "ВнутреннееПотребление" in standard_names
+
+
+def test_analyze_subsystem_not_found():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bsl, _ = _make_bsl_fixture(tmpdir)
+        result = bsl["analyze_subsystem"]("НесуществующаяПодсистема")
+        assert "error" in result
+
+
+BSL_CUSTOM_CODE = """\
+#Область ИРИС
+
+Процедура лтхОбработкаСпецодежды() Экспорт
+    // нетиповая процедура
+КонецПроцедуры
+
+Процедура ТиповаяПроцедура()
+    // типовая
+КонецПроцедуры
+
+#КонецОбласти
+"""
+
+
+def test_find_custom_modifications():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create object with custom code
+        doc_dir = os.path.join(tmpdir, "Documents", "ТестДок", "Ext")
+        os.makedirs(doc_dir)
+        with open(os.path.join(doc_dir, "ObjectModule.bsl"), "w", encoding="utf-8") as f:
+            f.write(BSL_CUSTOM_CODE)
+        with open(os.path.join(tmpdir, "Configuration.xml"), "w") as f:
+            f.write("<Configuration/>")
+
+        helpers, resolve_safe = make_helpers(tmpdir)
+        format_info = detect_format(tmpdir)
+        bsl = make_bsl_helpers(
+            base_path=tmpdir,
+            resolve_safe=resolve_safe,
+            read_file_fn=helpers["read_file"],
+            grep_fn=helpers["grep"],
+            glob_files_fn=helpers["glob_files"],
+            format_info=format_info,
+        )
+
+        result = bsl["find_custom_modifications"]("ТестДок")
+        assert result["modules_analyzed"] >= 1
+        assert len(result["modifications"]) >= 1
+        mod = result["modifications"][0]
+        custom_proc_names = [p["name"] for p in mod["custom_procedures"]]
+        assert "лтхОбработкаСпецодежды" in custom_proc_names
+        assert "ТиповаяПроцедура" not in custom_proc_names
+        region_names = [r["name"] for r in mod["custom_regions"]]
+        assert "ИРИС" in region_names
+
+
+def test_analyze_object():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bsl, _ = _make_bsl_fixture(tmpdir)
+        result = bsl["analyze_object"]("МойМодуль")
+        assert result["name"] == "МойМодуль"
+        assert result["category"] == "CommonModules"
+        assert len(result["modules"]) >= 1
+        mod = result["modules"][0]
+        assert mod["procedures_count"] == 3
+        assert mod["exports_count"] == 2

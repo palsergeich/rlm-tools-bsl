@@ -92,6 +92,10 @@ BSL HELPERS available in sandbox:
   find_callers_context(proc, hint, offset, limit)
                               -- find callers with context and pagination
   parse_object_xml(path)      -- parse 1C metadata XML
+  analyze_subsystem(name)     -- find subsystem, parse composition, classify custom/standard objects
+  find_custom_modifications(object_name, custom_prefixes=['лтх',...])
+                              -- find custom code in object modules (procedures, regions, XML attributes)
+  analyze_object(name)        -- full object profile (XML metadata + all modules + procedures + exports)
 
 FILE PATHS depend on format:
   CF:  CommonModules/Name/Ext/Module.bsl
