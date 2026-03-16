@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+
+# Ensure tests/ is on sys.path so bare imports work on all platforms
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import pytest
 from types import SimpleNamespace
 
