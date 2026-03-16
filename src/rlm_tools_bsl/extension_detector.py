@@ -188,47 +188,47 @@ def _detect_single(directory: str) -> ExtensionInfo | None:
 
     Returns ExtensionInfo or None if not a 1C configuration.
     """
-    base = Path(directory)
-    if not base.is_dir():
-        return None
-
-    # 1. Check Configuration.xml directly
-    cfg_xml = base / "Configuration.xml"
-    if cfg_xml.is_file():
-        result = _parse_config_xml(str(cfg_xml), directory)
-        if result is not None:
-            return result
-
-    # 2. Check */Configuration.mdo (EDT: Configuration/Configuration.mdo)
-    result = _scan_for_mdo(base, directory)
-    if result is not None:
-        return result
-
-    # 3. One level deeper: check each subdirectory
     try:
-        entries = list(base.iterdir())
-    except OSError:
-        return None
+        base = Path(directory)
+        if not base.is_dir():
+            return None
 
-    for entry in entries:
-        if not entry.is_dir():
-            continue
-        if entry.name in _SKIP_DIRS or entry.name.startswith("."):
-            continue
-
-        # CF: subdir/Configuration.xml
-        sub_xml = entry / "Configuration.xml"
-        if sub_xml.is_file():
-            result = _parse_config_xml(str(sub_xml), str(entry))
+        # 1. Check Configuration.xml directly
+        cfg_xml = base / "Configuration.xml"
+        if cfg_xml.is_file():
+            result = _parse_config_xml(str(cfg_xml), directory)
             if result is not None:
                 return result
 
-        # EDT: subdir/*/Configuration.mdo
-        result = _scan_for_mdo(entry, str(entry))
+        # 2. Check */Configuration.mdo (EDT: Configuration/Configuration.mdo)
+        result = _scan_for_mdo(base, directory)
         if result is not None:
             return result
 
-    return None
+        # 3. One level deeper: check each subdirectory
+        entries = list(base.iterdir())
+
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            if entry.name in _SKIP_DIRS or entry.name.startswith("."):
+                continue
+
+            # CF: subdir/Configuration.xml
+            sub_xml = entry / "Configuration.xml"
+            if sub_xml.is_file():
+                result = _parse_config_xml(str(sub_xml), str(entry))
+                if result is not None:
+                    return result
+
+            # EDT: subdir/*/Configuration.mdo
+            result = _scan_for_mdo(entry, str(entry))
+            if result is not None:
+                return result
+
+        return None
+    except OSError:
+        return None
 
 
 def _scan_for_mdo(base: Path, directory: str) -> ExtensionInfo | None:
@@ -282,7 +282,10 @@ def detect_extension_context(base_path: str) -> ExtensionContext:
             continue
 
         for entry in entries:
-            if not entry.is_dir():
+            try:
+                if not entry.is_dir():
+                    continue
+            except OSError:
                 continue
             if entry.name in _SKIP_DIRS or entry.name.startswith("."):
                 continue
