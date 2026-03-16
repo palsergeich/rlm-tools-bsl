@@ -1,4 +1,4 @@
-"""Tests that the strategy text contains recipes, return formats, and code examples."""
+"""Tests that the strategy text contains workflow, helpers table, and key sections."""
 
 from rlm_tools_bsl.bsl_knowledge import get_strategy
 
@@ -7,19 +7,22 @@ def _get_strategy_text():
     return get_strategy("medium", None)
 
 
-def test_strategy_contains_recipes():
+def test_strategy_contains_workflow():
     s = _get_strategy_text()
-    assert "RECIPES" in s
+    assert "WORKFLOW" in s
 
 
-def test_strategy_contains_return_formats():
+def test_strategy_contains_helpers_table():
     s = _get_strategy_text()
-    assert "RETURN FORMATS" in s
+    assert "HELPERS" in s
+    assert "Module discovery:" in s
+    assert "Business logic:" in s
+    assert "Extensions:" in s
 
 
 def test_strategy_contains_print_calls():
     s = _get_strategy_text()
-    assert "print(" in s
+    assert "print()" in s
 
 
 def test_strategy_contains_find_module_example():
@@ -48,8 +51,9 @@ def test_strategy_mentions_python_sandbox():
 
 
 def test_strategy_all_effort_levels():
-    """All effort levels should produce strategy with recipes."""
+    """All effort levels should produce strategy with workflow and helpers."""
     for effort in ("low", "medium", "high", "max"):
         s = get_strategy(effort, None)
-        assert "RECIPES" in s, f"Missing RECIPES for effort={effort}"
-        assert "RETURN FORMATS" in s, f"Missing RETURN FORMATS for effort={effort}"
+        assert "WORKFLOW" in s, f"Missing WORKFLOW for effort={effort}"
+        assert "HELPERS" in s, f"Missing HELPERS for effort={effort}"
+        assert "CRITICAL" in s, f"Missing CRITICAL for effort={effort}"

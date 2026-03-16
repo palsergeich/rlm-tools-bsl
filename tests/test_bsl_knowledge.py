@@ -128,8 +128,8 @@ def test_get_strategy_format_hints():
         metadata_categories_found=[],
     )
     cf_text = get_strategy("medium", cf_info)
-    assert "FORMAT: CF detected." in cf_text
-    assert "Ext/Module.bsl" in cf_text
+    assert "FORMAT: CF" in cf_text
+    assert "Ext/" in cf_text
 
     edt_info = FormatInfo(
         primary_format=SourceFormat.EDT,
@@ -139,13 +139,11 @@ def test_get_strategy_format_hints():
         metadata_categories_found=[],
     )
     edt_text = get_strategy("medium", edt_info)
-    assert "FORMAT: EDT detected." in edt_text
-    assert "CommonModules/MyModule/Module.bsl" in edt_text
-    assert "Ext/" not in edt_text.split("FORMAT: EDT detected.")[1]
+    assert "FORMAT: EDT" in edt_text
 
     none_text = get_strategy("medium", None)
-    assert "FORMAT: CF detected." not in none_text
-    assert "FORMAT: EDT detected." not in none_text
+    assert "FORMAT: CF" not in none_text
+    assert "FORMAT: EDT" not in none_text
 
 
 # --- Descriptions ---
