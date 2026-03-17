@@ -54,13 +54,15 @@ def _cmd_build(args: argparse.Namespace) -> None:
 
     base_path = _resolve_path(args.path)
     build_calls = not args.no_calls
+    build_metadata = not args.no_metadata
 
     print(f"Building index for: {base_path}")
     print(f"Call graph: {'yes' if build_calls else 'no'}")
+    print(f"Metadata:   {'yes' if build_metadata else 'no'}")
 
     t0 = time.time()
     builder = IndexBuilder()
-    db_path = builder.build(base_path, build_calls=build_calls)
+    db_path = builder.build(base_path, build_calls=build_calls, build_metadata=build_metadata)
     elapsed = time.time() - t0
 
     # Read back stats
@@ -72,10 +74,17 @@ def _cmd_build(args: argparse.Namespace) -> None:
     db_size = db_path.stat().st_size if db_path.exists() else 0
 
     print(f"\nIndex built in {elapsed:.1f}s")
+    if stats.get("config_name"):
+        print(f"  Config:   {stats['config_name']} {stats.get('config_version', '')}")
+    print(f"  Format:   {stats.get('source_format', 'unknown')}")
     print(f"  Modules:  {stats['modules']}")
     print(f"  Methods:  {stats['methods']}")
     print(f"  Calls:    {stats['calls']}")
     print(f"  Exports:  {stats['exports']}")
+    if build_metadata:
+        print(f"  EventSubs:  {stats.get('event_subscriptions', 0)}")
+        print(f"  SchedJobs:  {stats.get('scheduled_jobs', 0)}")
+        print(f"  FuncOpts:   {stats.get('functional_options', 0)}")
     print(f"  DB size:  {_fmt_size(db_size)}")
     print(f"  DB path:  {db_path}")
 
@@ -97,10 +106,20 @@ def _cmd_update(args: argparse.Namespace) -> None:
     delta = builder.update(base_path)
     elapsed = time.time() - t0
 
+    # Read back stats
+    from rlm_tools_bsl.bsl_index import IndexReader
+    reader = IndexReader(db_path)
+    stats = reader.get_statistics()
+    reader.close()
+
     print(f"\nUpdated in {elapsed:.1f}s")
     print(f"  Added:   {delta['added']}")
     print(f"  Changed: {delta['changed']}")
     print(f"  Removed: {delta['removed']}")
+    if stats.get("has_metadata") == "1":
+        print(f"  EventSubs:  {stats.get('event_subscriptions', 0)}")
+        print(f"  SchedJobs:  {stats.get('scheduled_jobs', 0)}")
+        print(f"  FuncOpts:   {stats.get('functional_options', 0)}")
 
 
 def _cmd_info(args: argparse.Namespace) -> None:
@@ -142,11 +161,21 @@ def _cmd_info(args: argparse.Namespace) -> None:
     }
 
     print(f"Index: {db_path}")
+    if stats.get("config_name"):
+        print(f"  Config:   {stats['config_name']} {stats.get('config_version', '')}")
+    if stats.get("source_format"):
+        print(f"  Format:   {stats['source_format']}")
     print(f"  Status:   {status_labels.get(status, status.value)}")
     print(f"  Modules:  {stats['modules']}")
     print(f"  Methods:  {stats['methods']}")
     print(f"  Calls:    {stats['calls']}")
     print(f"  Exports:  {stats['exports']}")
+    if stats.get("has_metadata") == "1":
+        print(f"  EventSubs:  {stats.get('event_subscriptions', 0)}")
+        print(f"  SchedJobs:  {stats.get('scheduled_jobs', 0)}")
+        print(f"  FuncOpts:   {stats.get('functional_options', 0)}")
+    elif stats.get("has_metadata") is not None:
+        print("  Metadata: not indexed")
     print(f"  DB size:  {_fmt_size(db_size)}")
 
     if stats["built_at"]:
@@ -182,12 +211,8 @@ def _cmd_drop(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    # Load .env (same logic as server.py)
-    try:
-        from dotenv import find_dotenv, load_dotenv
-        load_dotenv(find_dotenv(usecwd=True), override=False)
-    except ImportError:
-        pass
+    from rlm_tools_bsl._config import load_project_env
+    load_project_env()
 
     parser = argparse.ArgumentParser(
         prog="rlm-tools-bsl",
@@ -203,6 +228,7 @@ def main() -> None:
     build_p = idx_sub.add_parser("build", help="Full index build")
     build_p.add_argument("path", help="Root directory of 1C configuration")
     build_p.add_argument("--no-calls", action="store_true", help="Skip call graph")
+    build_p.add_argument("--no-metadata", action="store_true", help="Skip metadata tables (ES/SJ/FO)")
 
     # update
     update_p = idx_sub.add_parser("update", help="Incremental update by mtime+size")

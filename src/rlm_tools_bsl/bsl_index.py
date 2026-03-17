@@ -21,7 +21,7 @@ from rlm_tools_bsl.format_detector import BslFileInfo, parse_bsl_path
 
 logger = logging.getLogger(__name__)
 
-BUILDER_VERSION = 1
+BUILDER_VERSION = 2
 
 # ---------------------------------------------------------------------------
 # Regex patterns copied from bsl_helpers._parse_procedures / _strip_code_line
@@ -101,6 +101,45 @@ CREATE INDEX IF NOT EXISTS idx_mod_category ON modules(category);
 CREATE INDEX IF NOT EXISTS idx_meth_name ON methods(name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(callee_name COLLATE NOCASE);
 -- idx_calls_caller removed: saves ~56MB on ERP, update uses callee-based cleanup instead
+
+-- Level-2 metadata tables (optional, controlled by --no-metadata flag)
+CREATE TABLE IF NOT EXISTS event_subscriptions (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    synonym TEXT,
+    event TEXT,
+    handler_module TEXT,
+    handler_procedure TEXT,
+    source_types TEXT,
+    source_count INTEGER,
+    file TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_es_name ON event_subscriptions(name);
+
+CREATE TABLE IF NOT EXISTS scheduled_jobs (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    synonym TEXT,
+    method_name TEXT,
+    handler_module TEXT,
+    handler_procedure TEXT,
+    use INTEGER DEFAULT 1,
+    predefined INTEGER DEFAULT 0,
+    restart_count INTEGER DEFAULT 0,
+    restart_interval INTEGER DEFAULT 0,
+    file TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sj_name ON scheduled_jobs(name);
+
+CREATE TABLE IF NOT EXISTS functional_options (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    synonym TEXT,
+    location TEXT,
+    content TEXT,
+    file TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_fo_name ON functional_options(name);
 """
 
 
@@ -347,6 +386,273 @@ def _extract_calls_from_body(
     return calls
 
 
+# ---------------------------------------------------------------------------
+# Configuration XML parsing (Level 1 metadata)
+# ---------------------------------------------------------------------------
+def _parse_configuration_meta(base_path: str) -> dict[str, str]:
+    """Extract top-level config metadata from Configuration.xml (CF) or Configuration.mdo (EDT).
+
+    Returns dict with keys: config_name, config_synonym, config_version,
+    config_vendor, source_format, config_role.
+    """
+    import xml.etree.ElementTree as ET
+
+    from rlm_tools_bsl.format_detector import SourceFormat, detect_format
+
+    base = Path(base_path)
+    fmt_info = detect_format(base_path)
+    # detect_format returns FormatInfo; extract the primary_format enum value
+    if hasattr(fmt_info, "primary_format"):
+        fmt_str = fmt_info.primary_format.value
+    elif isinstance(fmt_info, SourceFormat):
+        fmt_str = fmt_info.value
+    else:
+        fmt_str = str(fmt_info)
+    meta: dict[str, str] = {"source_format": fmt_str}
+
+    # Try CF format: Configuration.xml in root
+    cf_xml = base / "Configuration.xml"
+    mdo_xml = base / "Configuration" / "Configuration.mdo"
+
+    ns_cf = {
+        "md": "http://v8.1c.ru/8.3/MDClasses",
+        "v8": "http://v8.1c.ru/8.1/data/core",
+    }
+
+    def _cf_text(props, tag: str) -> str:
+        el = props.find(f"md:{tag}", ns_cf)
+        return (el.text or "").strip() if el is not None else ""
+
+    def _cf_synonym(props) -> str:
+        syn_el = props.find("md:Synonym", ns_cf)
+        if syn_el is None:
+            return ""
+        for item in syn_el.findall("v8:item", ns_cf):
+            lang = item.find("v8:lang", ns_cf)
+            content = item.find("v8:content", ns_cf)
+            if lang is not None and content is not None and lang.text == "ru":
+                return (content.text or "").strip()
+        # Fallback to first item
+        for item in syn_el.findall("v8:item", ns_cf):
+            content = item.find("v8:content", ns_cf)
+            if content is not None and content.text:
+                return content.text.strip()
+        return ""
+
+    if cf_xml.is_file():
+        try:
+            tree = ET.parse(str(cf_xml))
+            root = tree.getroot()
+            # Find <Configuration><Properties>
+            cfg_el = root.find("md:Configuration", ns_cf)
+            if cfg_el is not None:
+                props = cfg_el.find("md:Properties", ns_cf)
+                if props is not None:
+                    meta["config_name"] = _cf_text(props, "Name")
+                    meta["config_synonym"] = _cf_synonym(props)
+                    meta["config_version"] = _cf_text(props, "Version")
+                    meta["config_vendor"] = _cf_text(props, "Vendor")
+                    ext_el = props.find("md:ConfigurationExtensionPurpose", ns_cf)
+                    if ext_el is not None and ext_el.text:
+                        meta["config_role"] = "extension"
+                    else:
+                        meta["config_role"] = "base"
+        except (ET.ParseError, OSError):
+            pass
+    elif mdo_xml.is_file():
+        try:
+            tree = ET.parse(str(mdo_xml))
+            root = tree.getroot()
+
+            def _mdo_text(tag: str) -> str:
+                for ch in root:
+                    local = ch.tag.split("}")[-1] if "}" in ch.tag else ch.tag
+                    if local == tag and ch.text:
+                        return ch.text.strip()
+                return ""
+
+            def _mdo_synonym() -> str:
+                for ch in root:
+                    local = ch.tag.split("}")[-1] if "}" in ch.tag else ch.tag
+                    if local == "synonym":
+                        # Look for <v8:item> children
+                        for item in ch:
+                            item_local = item.tag.split("}")[-1] if "}" in item.tag else item.tag
+                            if item_local == "item":
+                                lang_el = None
+                                content_el = None
+                                for sub in item:
+                                    sl = sub.tag.split("}")[-1] if "}" in sub.tag else sub.tag
+                                    if sl == "lang":
+                                        lang_el = sub
+                                    elif sl == "content":
+                                        content_el = sub
+                                if lang_el is not None and content_el is not None:
+                                    if lang_el.text == "ru":
+                                        return (content_el.text or "").strip()
+                        # Fallback: text content directly
+                        if ch.text and ch.text.strip():
+                            return ch.text.strip()
+                return ""
+
+            meta["config_name"] = _mdo_text("name")
+            meta["config_synonym"] = _mdo_synonym()
+            meta["config_version"] = _mdo_text("version")
+            meta["config_vendor"] = _mdo_text("vendor")
+            ext = _mdo_text("configurationExtensionPurpose")
+            meta["config_role"] = "extension" if ext else "base"
+        except (ET.ParseError, OSError):
+            pass
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# Level-2 metadata collection (ES, SJ, FO)
+# ---------------------------------------------------------------------------
+def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
+    """Scan and parse EventSubscriptions, ScheduledJobs, FunctionalOptions XMLs.
+
+    Returns dict with keys: event_subscriptions, scheduled_jobs, functional_options.
+    Each value is a list of tuples ready for INSERT.
+    """
+    import json as _json
+
+    from rlm_tools_bsl.bsl_xml_parsers import (
+        parse_event_subscription_xml,
+        parse_functional_option_xml,
+        parse_scheduled_job_xml,
+    )
+
+    base = Path(base_path)
+    result: dict[str, list[tuple]] = {
+        "event_subscriptions": [],
+        "scheduled_jobs": [],
+        "functional_options": [],
+    }
+
+    def _read(fp: Path) -> str | None:
+        try:
+            return fp.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            return None
+
+    def _glob_xml(category: str) -> list[Path]:
+        files: list[Path] = []
+        cat_dir = base / category
+        if not cat_dir.is_dir():
+            return files
+        for fp in cat_dir.rglob("*"):
+            if fp.suffix.lower() in (".xml", ".mdo") and fp.is_file():
+                files.append(fp)
+        return files
+
+    # EventSubscriptions
+    for fp in _glob_xml("EventSubscriptions"):
+        content = _read(fp)
+        if not content:
+            continue
+        parsed = parse_event_subscription_xml(content)
+        if not parsed or not parsed.get("name"):
+            continue
+        handler = parsed.get("handler") or ""
+        parts = handler.rsplit(".", 1)
+        handler_module = parts[0].replace("CommonModule.", "") if len(parts) > 1 else ""
+        handler_procedure = parts[-1] if parts else ""
+        source_types = parsed.get("source_types") or []
+        rel = fp.relative_to(base).as_posix()
+        result["event_subscriptions"].append((
+            parsed["name"],
+            parsed.get("synonym") or "",
+            parsed.get("event") or "",
+            handler_module,
+            handler_procedure,
+            _json.dumps(source_types, ensure_ascii=False),
+            len(source_types),
+            rel,
+        ))
+
+    # ScheduledJobs
+    for fp in _glob_xml("ScheduledJobs"):
+        content = _read(fp)
+        if not content:
+            continue
+        parsed = parse_scheduled_job_xml(content)
+        if not parsed or not parsed.get("name"):
+            continue
+        method_name = parsed.get("method_name") or ""
+        parts = method_name.rsplit(".", 1)
+        handler_module = parts[0].replace("CommonModule.", "") if len(parts) > 1 else ""
+        handler_procedure = parts[-1] if parts else ""
+        restart = parsed.get("restart_on_failure") or {}
+        rel = fp.relative_to(base).as_posix()
+        result["scheduled_jobs"].append((
+            parsed["name"],
+            parsed.get("synonym") or "",
+            method_name,
+            handler_module,
+            handler_procedure,
+            1 if parsed.get("use", True) else 0,
+            1 if parsed.get("predefined", False) else 0,
+            restart.get("count", 0),
+            restart.get("interval", 0),
+            rel,
+        ))
+
+    # FunctionalOptions
+    for fp in _glob_xml("FunctionalOptions"):
+        content = _read(fp)
+        if not content:
+            continue
+        parsed = parse_functional_option_xml(content)
+        if not parsed or not parsed.get("name"):
+            continue
+        fo_content = parsed.get("content") or []
+        rel = fp.relative_to(base).as_posix()
+        result["functional_options"].append((
+            parsed["name"],
+            parsed.get("synonym") or "",
+            parsed.get("location") or "",
+            _json.dumps(fo_content, ensure_ascii=False),
+            rel,
+        ))
+
+    return result
+
+
+def _insert_metadata_tables(conn: sqlite3.Connection, tables: dict[str, list[tuple]]) -> None:
+    """Insert Level-2 metadata into the database."""
+    # Clear existing data
+    conn.execute("DELETE FROM event_subscriptions")
+    conn.execute("DELETE FROM scheduled_jobs")
+    conn.execute("DELETE FROM functional_options")
+
+    if tables["event_subscriptions"]:
+        conn.executemany(
+            "INSERT INTO event_subscriptions "
+            "(name, synonym, event, handler_module, handler_procedure, source_types, source_count, file) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            tables["event_subscriptions"],
+        )
+
+    if tables["scheduled_jobs"]:
+        conn.executemany(
+            "INSERT INTO scheduled_jobs "
+            "(name, synonym, method_name, handler_module, handler_procedure, "
+            "use, predefined, restart_count, restart_interval, file) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            tables["scheduled_jobs"],
+        )
+
+    if tables["functional_options"]:
+        conn.executemany(
+            "INSERT INTO functional_options "
+            "(name, synonym, location, content, file) "
+            "VALUES (?, ?, ?, ?, ?)",
+            tables["functional_options"],
+        )
+
+
 def _process_single_file(
     file_path: Path,
     base_path: str,
@@ -393,11 +699,16 @@ def _process_single_file(
 class IndexBuilder:
     """Builds and incrementally updates the SQLite method index."""
 
-    def build(self, base_path: str, build_calls: bool = True) -> Path:
+    def build(self, base_path: str, build_calls: bool = True, build_metadata: bool = True) -> Path:
         """Full build of the method index.
 
         Scans all .bsl files under base_path, extracts methods and optionally
         a heuristic call graph, and writes results to a SQLite database.
+
+        Args:
+            base_path: Root directory of the 1C configuration.
+            build_calls: Whether to build the call graph.
+            build_metadata: Whether to parse Level-2 metadata (ES/SJ/FO).
 
         Returns:
             Path to the created database file.
@@ -422,7 +733,7 @@ class IndexBuilder:
             # Create empty DB with schema
             conn = sqlite3.connect(str(db_path))
             conn.executescript(_SCHEMA_SQL)
-            self._write_meta(conn, base_path, 0, "", build_calls)
+            self._write_meta(conn, base_path, 0, "", build_calls, build_metadata)
             conn.close()
             return db_path
 
@@ -462,7 +773,19 @@ class IndexBuilder:
         conn.executescript(_SCHEMA_SQL)
 
         self._bulk_insert(conn, results, build_calls)
-        self._write_meta(conn, base_path, total_files, paths_hash, build_calls)
+
+        # Level-1 metadata: Configuration XML
+        config_meta = _parse_configuration_meta(base_path)
+
+        # Level-2 metadata: ES, SJ, FO
+        if build_metadata:
+            md_tables = _collect_metadata_tables(base_path)
+            _insert_metadata_tables(conn, md_tables)
+
+        self._write_meta(
+            conn, base_path, total_files, paths_hash,
+            build_calls, build_metadata, config_meta,
+        )
 
         conn.execute("ANALYZE")
         conn.execute("VACUUM")
@@ -504,11 +827,16 @@ class IndexBuilder:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
 
-        # Read build_calls setting from meta
+        # Read build settings from meta
         meta_row = conn.execute(
             "SELECT value FROM index_meta WHERE key = 'has_calls'"
         ).fetchone()
         build_calls = meta_row is not None and meta_row["value"] == "1"
+
+        meta_row = conn.execute(
+            "SELECT value FROM index_meta WHERE key = 'has_metadata'"
+        ).fetchone()
+        has_metadata = meta_row is not None and meta_row["value"] == "1"
 
         # Existing modules in DB
         db_modules: dict[str, dict] = {}
@@ -610,6 +938,35 @@ class IndexBuilder:
                 ("built_at", str(time.time())),
             )
 
+        # Refresh Level-1 metadata (config version may have changed)
+        config_meta = _parse_configuration_meta(base_path)
+        for key, value in config_meta.items():
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+
+        # Refresh Level-2 metadata if originally built with metadata
+        if has_metadata:
+            # Ensure tables exist (in case of schema upgrade)
+            conn.executescript(
+                "CREATE TABLE IF NOT EXISTS event_subscriptions ("
+                "id INTEGER PRIMARY KEY, name TEXT NOT NULL, synonym TEXT, "
+                "event TEXT, handler_module TEXT, handler_procedure TEXT, "
+                "source_types TEXT, source_count INTEGER, file TEXT);\n"
+                "CREATE TABLE IF NOT EXISTS scheduled_jobs ("
+                "id INTEGER PRIMARY KEY, name TEXT NOT NULL, synonym TEXT, "
+                "method_name TEXT, handler_module TEXT, handler_procedure TEXT, "
+                "use INTEGER DEFAULT 1, predefined INTEGER DEFAULT 0, "
+                "restart_count INTEGER DEFAULT 0, restart_interval INTEGER DEFAULT 0, file TEXT);\n"
+                "CREATE TABLE IF NOT EXISTS functional_options ("
+                "id INTEGER PRIMARY KEY, name TEXT NOT NULL, synonym TEXT, "
+                "location TEXT, content TEXT, file TEXT);\n"
+            )
+            md_tables = _collect_metadata_tables(base_path)
+            _insert_metadata_tables(conn, md_tables)
+
+        conn.commit()
         conn.execute("ANALYZE")
         conn.close()
 
@@ -733,6 +1090,8 @@ class IndexBuilder:
         bsl_count: int,
         paths_hash: str,
         build_calls: bool,
+        build_metadata: bool = False,
+        config_meta: dict[str, str] | None = None,
     ) -> None:
         """Write index metadata."""
         meta_entries = [
@@ -743,7 +1102,13 @@ class IndexBuilder:
             ("builder_version", str(BUILDER_VERSION)),
             ("base_path", base_path),
             ("has_calls", "1" if build_calls else "0"),
+            ("has_metadata", "1" if build_metadata else "0"),
         ]
+        # Level-1: Configuration metadata
+        if config_meta:
+            for key, value in config_meta.items():
+                meta_entries.append((key, value))
+
         conn.executemany(
             "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
             meta_entries,
@@ -955,7 +1320,9 @@ class IndexReader:
         """Get summary statistics about the index.
 
         Returns:
-            dict with keys: modules, methods, calls, exports, built_at.
+            dict with keys: modules, methods, calls, exports, built_at,
+            config_name, config_version, source_format, has_metadata,
+            event_subscriptions, scheduled_jobs, functional_options.
         """
         with self._lock:
             stats: dict = {}
@@ -982,6 +1349,22 @@ class IndexReader:
                 "SELECT value FROM index_meta WHERE key = 'built_at'"
             ).fetchone()
             stats["built_at"] = float(meta_row["value"]) if meta_row else None
+
+            # Configuration metadata from index_meta
+            for key in ("config_name", "config_version", "config_synonym",
+                        "config_vendor", "source_format", "config_role", "has_metadata"):
+                meta_row = self._conn.execute(
+                    "SELECT value FROM index_meta WHERE key = ?", (key,)
+                ).fetchone()
+                stats[key] = meta_row["value"] if meta_row else None
+
+            # Level-2 metadata counts
+            for table in ("event_subscriptions", "scheduled_jobs", "functional_options"):
+                try:
+                    row = self._conn.execute(f"SELECT COUNT(*) AS cnt FROM {table}").fetchone()  # noqa: S608
+                    stats[table] = row["cnt"] if row else 0
+                except sqlite3.Error:
+                    stats[table] = 0
 
             return stats
 

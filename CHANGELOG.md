@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Добавлено
+- **Индекс методов BSL (SQLite)** — автономный модуль `bsl_index.py` + CLI `rlm-bsl-index` (команды `build`, `update`, `info`, `drop`). 7 таблиц: `modules`, `methods`, `calls`, `index_meta`, `event_subscriptions`, `scheduled_jobs`, `functional_options`.
+- **Метаданные конфигурации в индексе** — при build парсится `Configuration.xml` / `.mdo`: имя, версия, поставщик, формат (CF/EDT), роль (base/extension). Флаг `--no-metadata` для пропуска Level-2 таблиц (ES/SJ/FO).
+- **Единая загрузка `.env`** — модуль `_config.py` с `load_project_env()`. CLI и MCP-сервер используют одну цепочку поиска: `service.json` → user-level `.env` → CWD. Команда `rlm-bsl-index` работает из любого каталога.
+
+### Изменено
+- **Секция «Оптимизации»** перенесена из README в `docs/HELPERS.md`
+- **README** — добавлена информация о файле конфигурации сервиса (`service.json`)
+
+### Исправлено
+- CI: обработка `PermissionError` в `extension_detector` на Linux snap
+- CI: добавлен `pythonpath` для тестов на Linux
+- CI: `dependency-groups.dev` для совместимости `uv sync --dev`
+
 ## [1.1.0] — 2026-03-16
 
 ### Добавлено

@@ -515,12 +515,8 @@ def _setup_file_logging():
 
 
 def main():
-    # Load .env file (next to the executable, cwd, or project root)
-    try:
-        from dotenv import find_dotenv, load_dotenv
-        load_dotenv(find_dotenv(usecwd=True), override=True)
-    except ImportError:
-        pass
+    from rlm_tools_bsl._config import load_project_env
+    load_project_env()
 
     parser = argparse.ArgumentParser(description="rlm-tools-bsl MCP server")
     parser.add_argument(
