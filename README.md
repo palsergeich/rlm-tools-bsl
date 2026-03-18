@@ -271,7 +271,7 @@ RLM_LLM_MODEL=minimax/minimax-m2.5:free
 ```
 
 **Без настройки LLM всё остальное работает нормально** — `find_module`, `grep`, `read_file`, `parse_object_xml` и все прочие хелперы не требуют API-ключа. Просто `llm_query()` будет недоступен.
-Базовая функциональность rlm-tools-bsl не пострадает, просто для объяснения того как работает тот или иной механизм (в процессе анализа исходников) - основная модель-анализатор получит в отдельных сложных случаях неранжированный ответ и потратит больше токенов на поиск сути.
+Базовая функциональность rlm-tools-bsl не пострадает, но для объяснения того как работает тот или иной механизм (в процессе анализа исходников) - основная модель-анализатор получит в отдельных сложных случаях неранжированный ответ и потратит больше токенов на поиск сути.
 
 ## Быстрая установка и старт
 
@@ -293,8 +293,6 @@ PowerShell -ExecutionPolicy Bypass -File .\simple-install.ps1
 git pull
 PowerShell -ExecutionPolicy Bypass -File .\reinstall-service.ps1
 ```
-
-> Если выполнение скриптов уже разрешено (`Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`), можно запускать напрямую: `.\simple-install.ps1`
 
 ### Linux
 
@@ -336,12 +334,6 @@ chmod +x simple-install.sh
 
 > `"type": "http"` обязателен для большинства клиентов (Claude Code, Kilo Code, Roo Code, Cursor).
 
-**Для Claude Code** можно также добавить командой:
-```bash
-claude mcp add --transport http rlm-tools-bsl http://127.0.0.1:9000/mcp
-```
-
----
 
 ## Установка
 
@@ -359,14 +351,14 @@ rlm-tools-bsl --transport streamable-http
 {"mcpServers": {"rlm-tools-bsl": {"type": "http", "url": "http://127.0.0.1:9000/mcp"}}}
 ```
 
-> stdio-транспорт (`claude mcp add rlm-tools-bsl -- rlm-tools-bsl`) тоже работает, но подвержен обрывам при длительных сессиях. HTTP рекомендуется.
+> Подключение по stdio-транспорту тоже работает, но может быть подвержено обрывам при длительных сессиях. HTTP рекомендуется.
 
 ## Тестирование на реальных данных
 Выполнено на BSL-кодовой базе доработанной ERP 2.5 (формат выгрузки - конфигуратор)
 Выполнено на BSL-кодовой базе доработанной ERP 2.4 (формат выгрузки - EDT)
 Выполнено на BSL-выгрузках расширений в обоих форматах
 
-Готовый промпт для комплексного E2E-теста всех 29 хелперов: **[examples/full_analysis_prompt.md](examples/full_analysis_prompt.md)**
+Готовый промпт для комплексного E2E-теста всех 29 хелперов: **[docs/full_analysis_prompt.md](docs/full_analysis_prompt.md)**
 
 ## Лицензия
 
