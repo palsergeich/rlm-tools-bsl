@@ -524,6 +524,32 @@ def test_parse_object_xml_via_sandbox():
         assert result["name"] == "ВидыСпецодежды"
 
 
+def test_parse_object_xml_directory_path():
+    """Test parse_object_xml with a directory path (auto-resolves to XML)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _create_cf_fixture(tmpdir)
+        # Create CF-style Document metadata: Documents/TestDoc/Ext/Document.xml
+        doc_xml_dir = os.path.join(tmpdir, "Documents", "АвансовыйОтчет", "Ext")
+        os.makedirs(doc_xml_dir, exist_ok=True)
+        with open(os.path.join(doc_xml_dir, "Document.xml"), "w", encoding="utf-8") as f:
+            f.write(CATALOG_XML)  # reuse catalog XML, structure is similar enough
+
+        helpers, resolve_safe = make_helpers(tmpdir)
+        format_info = detect_format(tmpdir)
+        bsl = make_bsl_helpers(
+            base_path=tmpdir,
+            resolve_safe=resolve_safe,
+            read_file_fn=helpers["read_file"],
+            grep_fn=helpers["grep"],
+            glob_files_fn=helpers["glob_files"],
+            format_info=format_info,
+        )
+        # Pass directory path — should auto-resolve to Ext/Document.xml
+        result = bsl["parse_object_xml"]("Documents/АвансовыйОтчет")
+        assert "name" in result
+        assert result["name"] == "ВидыСпецодежды"  # from CATALOG_XML fixture
+
+
 # --- MDO format tests ---
 
 def test_parse_mdo_document():
@@ -830,7 +856,7 @@ EVENT_SUB_MDO_XML = """\
 <?xml version="1.0" encoding="UTF-8"?>
 <mdclass:EventSubscription xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass"
     uuid="7ce50cee-0000-0000-0000-000000000001">
-  <name>бг_ЗаписатьВерсиюДокумента</name>
+  <name>тст_ЗаписатьВерсиюДокумента</name>
   <synonym>
     <key>ru</key>
     <value>Записать версию документа</value>
@@ -1082,7 +1108,7 @@ def test_parse_cf_event_subscription():
 def test_parse_mdo_event_subscription():
     result = parse_event_subscription_xml(EVENT_SUB_MDO_XML)
     assert result is not None
-    assert result["name"] == "бг_ЗаписатьВерсиюДокумента"
+    assert result["name"] == "тст_ЗаписатьВерсиюДокумента"
     assert result["synonym"] == "Записать версию документа"
     assert result["event"] == "BeforeWrite"
     assert len(result["source_types"]) == 2

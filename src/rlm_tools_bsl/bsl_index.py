@@ -6,6 +6,7 @@ The index is stored on disk and supports incremental updates.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -516,8 +517,6 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
     Returns dict with keys: event_subscriptions, scheduled_jobs, functional_options.
     Each value is a list of tuples ready for INSERT.
     """
-    import json as _json
-
     from rlm_tools_bsl.bsl_xml_parsers import (
         parse_event_subscription_xml,
         parse_functional_option_xml,
@@ -567,7 +566,7 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
             parsed.get("event") or "",
             handler_module,
             handler_procedure,
-            _json.dumps(source_types, ensure_ascii=False),
+            json.dumps(source_types, ensure_ascii=False),
             len(source_types),
             rel,
         ))
@@ -613,7 +612,7 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
             parsed["name"],
             parsed.get("synonym") or "",
             parsed.get("location") or "",
-            _json.dumps(fo_content, ensure_ascii=False),
+            json.dumps(fo_content, ensure_ascii=False),
             rel,
         ))
 
@@ -1403,6 +1402,10 @@ class IndexReader:
                 ).fetchone()
                 stats[key] = meta_row["value"] if meta_row else None
 
+            # Convert stringly-typed flags to proper booleans
+            for flag in ("has_fts", "has_metadata"):
+                stats[flag] = stats.get(flag) == "1"
+
             # Level-2 metadata counts
             for table in ("event_subscriptions", "scheduled_jobs", "functional_options"):
                 try:
@@ -1473,6 +1476,162 @@ class IndexReader:
                 ]
             except sqlite3.OperationalError:
                 return []
+
+    def get_event_subscriptions(
+        self, object_name: str = "", custom_only: bool = False,
+    ) -> list[dict] | None:
+        """Get event subscriptions from the index, optionally filtered.
+
+        Args:
+            object_name: Filter by source type (case-insensitive substring).
+            custom_only: Not applied here (requires prefix detection from helpers).
+
+        Returns:
+            List of dicts matching find_event_subscriptions format, or None
+            if the table is empty / missing.
+        """
+        with self._lock:
+            try:
+                rows = self._conn.execute(
+                    "SELECT name, synonym, event, handler_module, handler_procedure, "
+                    "source_types, source_count, file FROM event_subscriptions"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return None
+
+            if not rows:
+                return None
+
+            result: list[dict] = []
+            name_lower = object_name.lower() if object_name else ""
+
+            for r in rows:
+                source_types: list[str] = []
+                try:
+                    source_types = json.loads(r["source_types"]) if r["source_types"] else []
+                except (ValueError, TypeError):
+                    pass
+
+                handler_module = r["handler_module"] or ""
+                handler_procedure = r["handler_procedure"] or ""
+                handler = (
+                    f"CommonModule.{handler_module}.{handler_procedure}"
+                    if handler_module else handler_procedure
+                )
+
+                entry = {
+                    "name": r["name"],
+                    "synonym": r["synonym"] or "",
+                    "source_types": source_types,
+                    "source_count": r["source_count"] or 0,
+                    "event": r["event"] or "",
+                    "handler": handler,
+                    "handler_module": handler_module,
+                    "handler_procedure": handler_procedure,
+                    "file": r["file"] or "",
+                }
+
+                if name_lower:
+                    if not source_types:
+                        result.append(entry)
+                    elif any(name_lower in t.lower() for t in source_types):
+                        result.append(entry)
+                else:
+                    stripped = {k: v for k, v in entry.items() if k != "source_types"}
+                    result.append(stripped)
+
+            return result
+
+    def get_scheduled_jobs(self, name: str = "") -> list[dict] | None:
+        """Get scheduled jobs from the index, optionally filtered by name.
+
+        Returns:
+            List of dicts matching find_scheduled_jobs format, or None
+            if the table is empty / missing.
+        """
+        with self._lock:
+            try:
+                sql = (
+                    "SELECT name, synonym, method_name, handler_module, "
+                    "handler_procedure, use, predefined, restart_count, "
+                    "restart_interval, file FROM scheduled_jobs"
+                )
+                params: tuple = ()
+                if name:
+                    sql += " WHERE name LIKE ? COLLATE NOCASE"
+                    params = (f"%{name}%",)
+                rows = self._conn.execute(sql, params).fetchall()
+            except sqlite3.OperationalError:
+                return None
+
+            if not rows:
+                return [] if name else None
+
+            return [
+                {
+                    "name": r["name"],
+                    "synonym": r["synonym"] or "",
+                    "method_name": r["method_name"] or "",
+                    "handler_module": r["handler_module"] or "",
+                    "handler_procedure": r["handler_procedure"] or "",
+                    "use": bool(r["use"]),
+                    "predefined": bool(r["predefined"]),
+                    "restart_on_failure": {
+                        "count": r["restart_count"] or 0,
+                        "interval": r["restart_interval"] or 0,
+                    },
+                    "file": r["file"] or "",
+                }
+                for r in rows
+            ]
+
+    def get_functional_options(self, object_name: str = "") -> list[dict] | None:
+        """Get functional options from the index, optionally filtered.
+
+        Args:
+            object_name: Filter by content list (case-insensitive substring).
+
+        Returns:
+            List of dicts matching find_functional_options format, or None
+            if the table is empty / missing.
+        """
+        with self._lock:
+            try:
+                rows = self._conn.execute(
+                    "SELECT name, synonym, location, content, file "
+                    "FROM functional_options"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return None
+
+            if not rows:
+                return None
+
+            result: list[dict] = []
+            name_lower = object_name.lower() if object_name else ""
+
+            for r in rows:
+                content_list: list[str] = []
+                try:
+                    content_list = json.loads(r["content"]) if r["content"] else []
+                except (ValueError, TypeError):
+                    pass
+
+                entry = {
+                    "name": r["name"],
+                    "synonym": r["synonym"] or "",
+                    "location": r["location"] or "",
+                    "content": content_list,
+                    "file": r["file"] or "",
+                }
+
+                if name_lower:
+                    if any(name_lower in c.lower() for c in content_list):
+                        result.append(entry)
+                else:
+                    result.append(entry)
+
+            return result
 
     def close(self) -> None:
         """Close the database connection."""

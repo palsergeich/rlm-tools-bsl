@@ -205,7 +205,21 @@ rlm-tools-bsl service uninstall
 
 ### Обновление до новой версии
 
-При обновлении из git необходимо очистить кэш сборки uv, иначе будет установлена старая версия из кэша:
+**Рекомендуемый способ** (от администратора):
+
+```bash
+git pull
+PowerShell -ExecutionPolicy Bypass -File .\reinstall-service.ps1
+```
+
+Скрипт автоматически:
+1. Остановит и удалит службу
+2. Очистит stale-артефакты предыдущих установок (dangling dist-info, user site-packages, каталог dist/)
+3. Очистит кэш uv и пересоберет пакет
+4. Установит и запустит службу
+5. Проверит health и выведет версию
+
+**Без службы** (только CLI):
 
 ```bash
 git pull
@@ -213,20 +227,9 @@ uv cache clean rlm-tools-bsl
 uv tool install ".[service]" --force --reinstall
 ```
 
-Если служба уже была установлена — переустановите её (от администратора):
-```bash
-git pull
-PowerShell -ExecutionPolicy Bypass -File .\reinstall-service.ps1
-```
+Проверьте версию: `rlm-tools-bsl --version`, `rlm-bsl-index --version`
 
-Или вручную:
-```bash
-rlm-tools-bsl service uninstall
-uv cache clean rlm-tools-bsl
-PowerShell -ExecutionPolicy Bypass -File .\simple-install.ps1
-```
-
-Проверьте версию: `rlm-tools-bsl --version`
+> **Важно:** Не используйте `pip install -e .` для обновления — это может установить пакет в неправильное окружение Python и сломать службу. Всегда используйте `uv tool install` или `reinstall-service.ps1`.
 
 ## 5. Проверить работоспособность
 

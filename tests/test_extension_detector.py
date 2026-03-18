@@ -33,7 +33,7 @@ _CF_MAIN_XML = textwrap.dedent("""\
 """)
 
 
-def _cf_extension_xml(name="МоёРасширение", purpose="Customization", prefix="мр_"):
+def _cf_extension_xml(name="ТестовоеРасширение", purpose="Customization", prefix="мр_"):
     return textwrap.dedent(f"""\
         <?xml version="1.0" encoding="UTF-8"?>
         <MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses"
@@ -60,7 +60,7 @@ _EDT_MAIN_MDO = textwrap.dedent("""\
 """)
 
 
-def _edt_extension_mdo(name="МоёЕДТРасширение", purpose="AddOn", prefix="бг_"):
+def _edt_extension_mdo(name="ТестовоеЕДТРасширение", purpose="AddOn", prefix="тст_"):
     return textwrap.dedent(f"""\
         <?xml version="1.0" encoding="UTF-8"?>
         <mdclass:Configuration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -103,11 +103,11 @@ def test_detect_main_cf():
 def test_detect_extension_cf():
     with tempfile.TemporaryDirectory() as d:
         _write(os.path.join(d, "Configuration.xml"),
-               _cf_extension_xml("МоёРасширение", "AddOn", "мр_"))
+               _cf_extension_xml("ТестовоеРасширение", "AddOn", "мр_"))
         info = _detect_single(d)
         assert info is not None
         assert info.role == ConfigRole.EXTENSION
-        assert info.name == "МоёРасширение"
+        assert info.name == "ТестовоеРасширение"
         assert info.purpose == "AddOn"
         assert info.name_prefix == "мр_"
         assert info.source_format == "cf"
@@ -126,20 +126,20 @@ def test_detect_main_edt():
 def test_detect_extension_edt():
     with tempfile.TemporaryDirectory() as d:
         _write(os.path.join(d, "Configuration", "Configuration.mdo"),
-               _edt_extension_mdo("belugaerp", "Customization", "бг_"))
+               _edt_extension_mdo("ТестовоеРасширение", "Customization", "тст_"))
         info = _detect_single(d)
         assert info is not None
         assert info.role == ConfigRole.EXTENSION
-        assert info.name == "belugaerp"
+        assert info.name == "ТестовоеРасширение"
         assert info.purpose == "Customization"
-        assert info.name_prefix == "бг_"
+        assert info.name_prefix == "тст_"
         assert info.source_format == "edt"
 
 
 def test_cfe_wrapper_dir():
     """Extension inside a wrapper subdirectory (e.g. cfe/MyExt/Configuration.xml)."""
     with tempfile.TemporaryDirectory() as d:
-        wrapper = os.path.join(d, "МоёРасширение")
+        wrapper = os.path.join(d, "ТестовоеРасширение")
         _write(os.path.join(wrapper, "Configuration.xml"),
                _cf_extension_xml("Расш1", "Fix", "р1_"))
         info = _detect_single(d)

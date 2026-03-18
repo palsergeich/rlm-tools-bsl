@@ -57,9 +57,19 @@ This prompt exercises all 29 helpers without explicitly naming them. The AI agen
 - **max_output_chars**: `30000` — large modules produce verbose output
 - **execution_timeout_seconds**: `120` — composite helpers on large configs need time
 
-## Test results (v1.1.0, ERP 23K+ files)
+## Test results (v1.2.0, ERP 23K+ files, 617K methods index)
 
-| Client | Model | Helpers used | Coverage | Notes |
-|--------|-------|-------------|----------|-------|
-| Claude Code (agent) | Sonnet 4.6 | 25/29 | ~95% | Blind test, no tool hints |
-| Kilo Code | Sonnet 4.6 | 22/29 | ~75% | Used effort=low, hit call limit |
+### Without index
+
+| Client | Model | rlm_execute | Sections | Notes |
+|--------|-------|------------|----------|-------|
+| Claude Code | Sonnet 4.6 | 52 | 16 | Reference quality, ~14.6 min |
+| Cursor | Sonnet 4.6 | 24 | 15 | Near-reference quality, dense batching |
+| Kilo Code | Minimax m2.5 | 19 | 14 | Gaps: wrong enum, no callers, timeouts |
+
+### With index
+
+| Client | Model | rlm_execute | Sections | Notes |
+|--------|-------|------------|----------|-------|
+| Claude Code | Sonnet 4.6 | 35 | 15 | 33% fewer calls, ~11 min, FTS used |
+| Kilo Code | Minimax m2.5 | 10 | 14 | Huge improvement: clean report, correct data |

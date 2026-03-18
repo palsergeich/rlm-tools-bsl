@@ -131,6 +131,9 @@ def _load_env_file(path: str, env: dict) -> None:
                 k, _, v = line.partition("=")
                 k = k.strip()
                 v = v.strip().strip('"').strip("'")
+                # Strip inline comments: VALUE # comment
+                if "#" in v and not v.startswith("#"):
+                    v = v[:v.index("#")].rstrip()
                 env.setdefault(k, v)
     except OSError:
         pass

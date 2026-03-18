@@ -121,7 +121,7 @@ def _cmd_update(args: argparse.Namespace) -> None:
     print(f"  Added:   {delta['added']}")
     print(f"  Changed: {delta['changed']}")
     print(f"  Removed: {delta['removed']}")
-    if stats.get("has_metadata") == "1":
+    if stats.get("has_metadata"):
         print(f"  EventSubs:  {stats.get('event_subscriptions', 0)}")
         print(f"  SchedJobs:  {stats.get('scheduled_jobs', 0)}")
         print(f"  FuncOpts:   {stats.get('functional_options', 0)}")
@@ -175,13 +175,13 @@ def _cmd_info(args: argparse.Namespace) -> None:
     print(f"  Methods:  {stats['methods']}")
     print(f"  Calls:    {stats['calls']}")
     print(f"  Exports:  {stats['exports']}")
-    if stats.get("has_metadata") == "1":
+    if stats.get("has_metadata"):
         print(f"  EventSubs:  {stats.get('event_subscriptions', 0)}")
         print(f"  SchedJobs:  {stats.get('scheduled_jobs', 0)}")
         print(f"  FuncOpts:   {stats.get('functional_options', 0)}")
     elif stats.get("has_metadata") is not None:
         print("  Metadata: not indexed")
-    print(f"  FTS:      {'yes' if stats.get('has_fts') == '1' else 'no'}")
+    print(f"  FTS:      {'yes' if stats.get('has_fts') else 'no'}")
     print(f"  DB size:  {_fmt_size(db_size)}")
 
     if stats["built_at"]:
@@ -220,9 +220,15 @@ def main() -> None:
     from rlm_tools_bsl._config import load_project_env
     load_project_env()
 
+    import importlib.metadata
     parser = argparse.ArgumentParser(
-        prog="rlm-tools-bsl",
-        description="1C (BSL) codebase analysis tools",
+        prog="rlm-bsl-index",
+        description="1C (BSL) method index management",
+    )
+    parser.add_argument(
+        "--version", "-V",
+        action="version",
+        version=f"%(prog)s {importlib.metadata.version('rlm-tools-bsl')}",
     )
     sub = parser.add_subparsers(dest="group")
 

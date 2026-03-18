@@ -40,12 +40,14 @@ Write Python code in rlm_execute. Use print() to output results.
 Large configs have 23,000+ files. grep on broad paths WILL timeout. ALWAYS:
   1. find_module('name') → get file paths first
   2. Then read_file(path) or grep(pattern, path=specific_file)
+If a helper returns an error, read the HINT at the end — it tells you what to do next.
 
 == WORKFLOW ==
 BEFORE YOU START: check rlm_start response — warnings, extension_context, detected_custom_prefixes.
 
 Step 1 — DISCOVER: find what you need
   find_module('name') or find_by_type('Documents', 'name') → get file paths
+  search_methods('substring') → find methods across all modules by name (needs index)
   parse_object_xml(path) → attributes, tabular sections, dimensions, resources
 
 Step 2 — READ: understand the code
@@ -63,6 +65,8 @@ Step 4 — ANALYZE: get the full picture
   analyze_document_flow(doc_name) → subscriptions + register movements + jobs
   find_custom_modifications(object_name) → find non-standard code by prefix
   find_register_movements(doc_name) → which registers a document writes to
+  CAUTION: analyze_document_flow and analyze_object scan many files — on large configs (10K+)
+  they may be slow (>60s). Prefer calling individual helpers separately if timeout occurs.
 
 Step 5 — EXTENSIONS: check if behavior is modified
   If extensions detected (see warnings): find_ext_overrides(ext_path, 'ObjectName')
@@ -117,7 +121,9 @@ def build_helpers_table(registry: dict) -> str:
 
 def get_strategy(effort: str, format_info, detected_prefixes: list[str] | None = None,
                  extension_context=None, ext_overrides: dict | None = None,
-                 registry: dict | None = None) -> str:
+                 registry: dict | None = None,
+                 idx_stats: dict | None = None,
+                 idx_warnings: list[str] | None = None) -> str:
     config = EFFORT_LEVELS.get(effort, EFFORT_LEVELS["medium"])
 
     has_extensions = (
@@ -141,6 +147,51 @@ def get_strategy(effort: str, format_info, detected_prefixes: list[str] | None =
         parts.append(build_helpers_table(registry))
     else:
         parts.append(_STRATEGY_IO_SECTION)
+
+    # --- Index status ---
+    if idx_stats is not None:
+        methods_count = idx_stats.get("methods", 0)
+        calls_count = idx_stats.get("calls", 0)
+        config_name = idx_stats.get("config_name") or ""
+        config_version = idx_stats.get("config_version") or ""
+        has_fts = bool(idx_stats.get("has_fts"))
+
+        idx_lines = ["\n== INDEX =="]
+        label = f"Pre-built method index loaded ({methods_count} methods, {calls_count} call edges"
+        if config_name:
+            label += f", config: {config_name}"
+            if config_version:
+                label += f" v{config_version}"
+        label += ")."
+        idx_lines.append(label)
+
+        # Speedup summary
+        instant_helpers = ["extract_procedures()", "find_exports()"]
+        if calls_count:
+            instant_helpers.append("find_callers_context()")
+        instant_helpers.extend([
+            "find_event_subscriptions()", "find_scheduled_jobs()", "find_functional_options()",
+        ])
+        idx_lines.append(f"INSTANT from index: {', '.join(instant_helpers)}.")
+
+        # FTS discovery
+        if has_fts:
+            idx_lines.append(
+                "search_methods(query) — full-text search by method name substring. "
+                "Use in Step 1 DISCOVER to find methods across the entire codebase without knowing the module name."
+            )
+
+        # Workflow hints
+        idx_lines.append(
+            "INDEX TIPS:\n"
+            "  - find_callers_context() returns instantly — no need to limit scope with hint, search the whole codebase.\n"
+            "  - Batch 5-10 helpers per rlm_execute (index calls are <1ms each).\n"
+            "  - extract_procedures + find_exports + find_callers_context in ONE call is fine."
+        )
+
+        for w in (idx_warnings or []):
+            idx_lines.append(f"WARNING: {w}")
+        parts.append("\n".join(idx_lines))
 
     # --- Effort & limits ---
     parts.append(f"\n== EFFORT: {effort} ==")

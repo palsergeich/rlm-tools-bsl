@@ -294,7 +294,7 @@ def test_extension_context_main_with_nearby_extension():
                     <Configuration uuid="00000000-0000-0000-0000-000000000002">
                         <Properties>
                             <ObjectBelonging>Adopted</ObjectBelonging>
-                            <Name>МоёРасш</Name>
+                            <Name>ТестРасш</Name>
                             <ConfigurationExtensionPurpose>AddOn</ConfigurationExtensionPurpose>
                             <NamePrefix>мр_</NamePrefix>
                         </Properties>
@@ -310,7 +310,7 @@ def test_extension_context_main_with_nearby_extension():
         assert ec["is_extension"] is False
         assert ec["config_role"] == "main"
         assert len(ec["nearby_extensions"]) == 1
-        assert ec["nearby_extensions"][0]["name"] == "МоёРасш"
+        assert ec["nearby_extensions"][0]["name"] == "ТестРасш"
         assert ec["nearby_extensions"][0]["purpose"] == "AddOn"
         # warnings are at top level, not inside extension_context
         assert len(data["warnings"]) > 0

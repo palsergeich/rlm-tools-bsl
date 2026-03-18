@@ -124,11 +124,11 @@ def test_parse_cf_command_module():
 def test_parse_edt_common_module():
     with tempfile.TemporaryDirectory() as base:
         result = parse_bsl_path(
-            os.path.join(base, "CommonModules", "адаптер_Интеграция", "Module.bsl"),
+            os.path.join(base, "CommonModules", "тст_Интеграция", "Module.bsl"),
             base,
         )
         assert result.category == "CommonModules"
-        assert result.object_name == "адаптер_Интеграция"
+        assert result.object_name == "тст_Интеграция"
         assert result.module_type == "Module"
         assert result.is_form_module is False
 
@@ -136,11 +136,11 @@ def test_parse_edt_common_module():
 def test_parse_edt_form_module():
     with tempfile.TemporaryDirectory() as base:
         result = parse_bsl_path(
-            os.path.join(base, "Catalogs", "адаптер_ВходящиеСообщения", "Forms", "ФормаСписка", "Module.bsl"),
+            os.path.join(base, "Catalogs", "тст_ВходящиеСообщения", "Forms", "ФормаСписка", "Module.bsl"),
             base,
         )
         assert result.category == "Catalogs"
-        assert result.object_name == "адаптер_ВходящиеСообщения"
+        assert result.object_name == "тст_ВходящиеСообщения"
         assert result.form_name == "ФормаСписка"
         assert result.is_form_module is True
 

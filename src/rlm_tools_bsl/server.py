@@ -24,6 +24,13 @@ from rlm_tools_bsl.bsl_knowledge import (
     RLM_START_DESCRIPTION,
     get_strategy,
 )
+from rlm_tools_bsl.bsl_index import (
+    IndexReader,
+    IndexStatus,
+    check_index_freshness,
+    get_index_db_path,
+)
+from rlm_tools_bsl.cache import _paths_hash
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,12 +43,14 @@ session_manager = SessionManager(
 )
 
 _sandboxes: dict[str, Sandbox] = {}
+_idx_readers: dict[str, IndexReader] = {}
 _sandboxes_lock = threading.Lock()
 
 
 from rlm_tools_bsl.helpers import _SKIP_DIRS, _BINARY_EXTENSIONS
 
 _MAX_OVERRIDES_IN_RESPONSE = 100
+
 
 
 def _auto_scan_overrides(ext_context) -> dict[str, list[dict]]:
@@ -119,6 +128,12 @@ def _cleanup_expired_resources() -> None:
     with _sandboxes_lock:
         for session_id in expired_session_ids:
             _sandboxes.pop(session_id, None)
+            reader = _idx_readers.pop(session_id, None)
+            if reader is not None:
+                try:
+                    reader.close()
+                except Exception:
+                    pass
 
 
 def _resolve_mapped_drive(path: str) -> str | None:
@@ -262,14 +277,55 @@ def _rlm_start(
             ext_context.current.role.value,
             sum(len(v) for v in ext_overrides.values()),
         )
+        # --- Load method index (optional accelerator) ---
+        idx_reader = None
+        idx_warnings: list[str] = []
+        idx_stats: dict | None = None
+        try:
+            db_path = get_index_db_path(resolved)
+            if db_path.exists():
+                bsl_files = [
+                    str(p.relative_to(resolved).as_posix())
+                    for p in pathlib.Path(resolved).rglob("*.bsl")
+                ]
+                bsl_count = len(bsl_files)
+                paths_hash = _paths_hash(bsl_files) if bsl_files else ""  # sorts internally
+
+                status = check_index_freshness(db_path, bsl_count, paths_hash, resolved)
+                logger.info(
+                    "rlm_start: session=%s index status=%s db=%s",
+                    session_id, status.value, db_path,
+                )
+
+                if status in (IndexStatus.FRESH, IndexStatus.STALE_AGE, IndexStatus.STALE_CONTENT):
+                    idx_reader = IndexReader(db_path)
+                    idx_stats = idx_reader.get_statistics()
+                    if status == IndexStatus.STALE_AGE:
+                        built_at = idx_stats.get("built_at")
+                        age_days = int((time.time() - float(built_at)) / 86400) if built_at else "?"
+                        idx_warnings.append(
+                            f"Index is {age_days} days old — verify critical findings with live read_file()"
+                        )
+                    elif status == IndexStatus.STALE_CONTENT:
+                        idx_warnings.append(
+                            "Index content may be outdated — run 'rlm-bsl-index index update' to refresh"
+                        )
+                elif status == IndexStatus.STALE:
+                    idx_warnings.append(
+                        "Index structure mismatch (files added/removed) — run 'rlm-bsl-index index build' to rebuild"
+                    )
+        except Exception as e:
+            logger.warning("rlm_start: session=%s index load failed: %s", session_id, e)
+
         sandbox = Sandbox(
             base_path=resolved,
             max_output_chars=max_output_chars,
             execution_timeout_seconds=execution_timeout_seconds,
             format_info=format_info,
+            idx_reader=idx_reader,
         )
         has_llm_tools = _install_session_llm_tools(session, sandbox)
-        logger.info("rlm_start: session=%s sandbox ready, llm_tools=%s", session_id, has_llm_tools)
+        logger.info("rlm_start: session=%s sandbox ready, llm_tools=%s index=%s", session_id, has_llm_tools, idx_reader is not None)
 
         # Auto-detect custom prefixes from object names
         detected_prefixes: list[str] = []
@@ -281,10 +337,15 @@ def _rlm_start(
                 pass
 
         bsl_registry = sandbox._namespace.get("_registry") or {}
-        strategy = get_strategy(effort, format_info, detected_prefixes, ext_context, ext_overrides, registry=bsl_registry)
+        strategy = get_strategy(
+            effort, format_info, detected_prefixes, ext_context, ext_overrides,
+            registry=bsl_registry, idx_stats=idx_stats, idx_warnings=idx_warnings,
+        )
 
         with _sandboxes_lock:
             _sandboxes[session_id] = sandbox
+            if idx_reader is not None:
+                _idx_readers[session_id] = idx_reader
     except Exception as e:
         logger.error("rlm_start: session=%s failed: %s", session_id, e, exc_info=True)
         session_manager.end(session_id)
@@ -335,6 +396,15 @@ def _rlm_start(
             "own_overrides": ext_overrides.get("self", []) if ext_context.current.role.value == "extension" else None,
         },
         "detected_custom_prefixes": detected_prefixes,
+        "index": {
+            "loaded": idx_reader is not None,
+            "methods": idx_stats.get("methods") if idx_stats else None,
+            "calls": idx_stats.get("calls") if idx_stats else None,
+            "has_fts": idx_stats.get("has_fts", False) if idx_stats else False,
+            "config_name": idx_stats.get("config_name") if idx_stats else None,
+            "config_version": idx_stats.get("config_version") if idx_stats else None,
+            "warnings": idx_warnings,
+        },
         "metadata": metadata,
         "limits": {
             "max_llm_calls": session.max_llm_calls,
@@ -427,6 +497,12 @@ def _rlm_end(session_id: str) -> str:
     session_manager.end(session_id)
     with _sandboxes_lock:
         _sandboxes.pop(session_id, None)
+        reader = _idx_readers.pop(session_id, None)
+    if reader is not None:
+        try:
+            reader.close()
+        except Exception:
+            pass
     return json.dumps({"success": True}, ensure_ascii=False)
 
 

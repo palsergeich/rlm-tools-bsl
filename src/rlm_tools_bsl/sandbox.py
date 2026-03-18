@@ -51,11 +51,13 @@ class Sandbox:
         max_output_chars: int = 15_000,
         execution_timeout_seconds: int = 45,
         format_info=None,
+        idx_reader=None,
     ):
         self._base_path = base_path
         self._max_output_chars = max_output_chars
         self._execution_timeout_seconds = execution_timeout_seconds
         self._format_info = format_info
+        self._idx_reader = idx_reader
         self._namespace: dict = {}
         self._resolve_safe = None
         self._setup_namespace()
@@ -98,6 +100,7 @@ class Sandbox:
                 grep_fn=helpers["grep"],
                 glob_files_fn=helpers["glob_files"],
                 format_info=self._format_info,
+                idx_reader=self._idx_reader,
             )
             self._namespace.update(bsl_helpers)
 
@@ -163,6 +166,7 @@ class Sandbox:
                     exec(code, self._namespace)
         except Exception:
             error = traceback.format_exc()
+            error = self._add_error_hints(error, code)
 
         stdout = stdout_capture.getvalue()
         if len(stdout) > self._max_output_chars:
@@ -173,6 +177,47 @@ class Sandbox:
             error=error,
             variables=self.list_variables(),
         )
+
+    @staticmethod
+    def _add_error_hints(error: str, code: str) -> str:
+        """Append actionable hints to common errors."""
+        hints: list[str] = []
+
+        if "FileNotFoundError" in error or "No such file" in error:
+            if "parse_object_xml" in code:
+                hints.append(
+                    "HINT: parse_object_xml accepts directory paths too: "
+                    "parse_object_xml('Documents/Name') — it auto-finds the XML."
+                )
+            elif ".xml" in code or ".bsl" in code:
+                hints.append(
+                    "HINT: Use find_module('Name') or glob_files('**/pattern') "
+                    "to discover correct file paths first."
+                )
+
+        if "TimeoutError" in error:
+            hints.append(
+                "HINT: Operation timed out. For large configs, avoid composite helpers "
+                "(analyze_document_flow, analyze_object) and call individual helpers instead: "
+                "find_register_movements, find_event_subscriptions, find_callers_context."
+            )
+
+        if "NameError" in error:
+            hints.append(
+                "HINT: Call help() to see available functions. "
+                "Variables persist between rlm_execute calls."
+            )
+
+        if "import" in error.lower() and "restricted" in error.lower():
+            hints.append(
+                "HINT: Only standard library modules are allowed. "
+                "Use built-in helpers instead of external libraries."
+            )
+
+        if hints:
+            error = error.rstrip() + "\n\n" + "\n".join(hints)
+
+        return error
 
     def list_variables(self) -> list[str]:
         return [

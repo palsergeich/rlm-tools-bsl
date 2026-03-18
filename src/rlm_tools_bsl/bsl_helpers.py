@@ -62,9 +62,11 @@ def make_bsl_helpers(
     grep_fn,           # callable: (pattern, path) -> list[dict]
     glob_files_fn,     # callable: (pattern) -> list[str]
     format_info: FormatInfo | None = None,
+    idx_reader=None,   # optional IndexReader for SQLite index acceleration
 ) -> dict:
     """Creates BSL helper functions for sandbox namespace.
-    Internal _bsl_index is built lazily on first find_module() call."""
+    Internal _bsl_index is built lazily on first find_module() call.
+    If idx_reader is provided, helpers use it as a fast path with fallback."""
 
     # Mutable closure state for lazy index
     _index_state: list = []          # list of tuples (relative_path, BslFileInfo)
@@ -277,9 +279,16 @@ def make_bsl_helpers(
     def extract_procedures(path: str) -> list[dict]:
         """Parse BSL file and return list of procedures/functions with metadata.
         Results are memoized per file path within the session.
+        Uses SQLite index when available (instant), falls back to regex parsing.
 
         Returns: list of dicts {name, type, line, end_line, is_export, params}."""
-        return _proc_lazy.get_or_set(path, lambda: _parse_procedures(path))
+        def _extract_with_index():
+            if idx_reader is not None:
+                result = idx_reader.get_methods_by_path(path)
+                if result is not None:
+                    return result
+            return _parse_procedures(path)
+        return _proc_lazy.get_or_set(path, _extract_with_index)
 
     def find_exports(path: str) -> list[dict]:
         """Return only exported procedures/functions from a BSL file.
@@ -396,6 +405,7 @@ def make_bsl_helpers(
 
         Unlike find_callers() which is a flat grep, this helper identifies
         the exact calling procedure and filters out comments/strings.
+        Uses SQLite call graph index when available (instant).
 
         Args:
             proc_name: Name of the target procedure/function.
@@ -406,6 +416,12 @@ def make_bsl_helpers(
         Returns:
             dict with "callers" list and "_meta" pagination info.
         """
+        # --- Fast path: SQLite call graph ---
+        if idx_reader is not None and idx_reader.has_calls:
+            result = idx_reader.get_callers(proc_name, module_hint, offset, limit)
+            if result is not None:
+                return result
+
         _ensure_index()
 
         name_esc = re.escape(proc_name)
@@ -520,15 +536,70 @@ def make_bsl_helpers(
             },
         }
 
+    # XML file names by metadata category (CF format: Ext/<name>.xml)
+    _CATEGORY_XML_NAMES = {
+        "documents": "Document", "catalogs": "Catalog",
+        "informationregisters": "RecordSet", "accumulationregisters": "RecordSet",
+        "accountingregisters": "RecordSet", "calculationregisters": "RecordSet",
+        "reports": "Report", "dataprocessors": "DataProcessor",
+        "exchangeplans": "ExchangePlan", "chartsofaccounts": "ChartOfAccounts",
+        "chartsofcharacteristictypes": "ChartOfCharacteristicTypes",
+        "chartsofcalculationtypes": "ChartOfCalculationTypes",
+        "businessprocesses": "BusinessProcess", "tasks": "Task",
+        "constants": "Constant",
+    }
+
+    def _resolve_object_xml(path: str) -> str:
+        """Resolve path to the actual XML file.
+
+        Accepts:
+          - Direct path: 'Documents/Name/Ext/Document.xml' → as-is
+          - Directory path: 'Documents/Name' → tries Ext/<Type>.xml, then .xml, then .mdo
+          - Object path without Ext: 'Documents/Name.xml' → as-is
+        """
+        path_lower = path.lower().replace("\\", "/")
+        if path_lower.endswith(".xml") or path_lower.endswith(".mdo"):
+            return path
+
+        # Try CF format: <path>/Ext/<Type>.xml
+        parts = path.replace("\\", "/").split("/")
+        category = parts[0].lower() if parts else ""
+        xml_name = _CATEGORY_XML_NAMES.get(category)
+
+        candidates = []
+        if xml_name:
+            candidates.append(f"{path}/Ext/{xml_name}.xml")
+        # Generic fallbacks
+        candidates.append(f"{path}.xml")
+        candidates.append(f"{path}.mdo")
+        # Try glob for any XML in Ext/
+        candidates_glob = glob_files_fn(f"{path}/Ext/*.xml")
+        if candidates_glob:
+            candidates.extend(candidates_glob[:1])
+
+        for candidate in candidates:
+            try:
+                if resolve_safe(candidate).exists():
+                    return candidate
+            except Exception:
+                continue
+
+        return path  # return original, let read_file_fn produce the error
+
     def parse_object_xml(path: str) -> dict:
         """Read a 1C metadata XML file and extract its structure:
         name, synonym, attributes, tabular sections, dimensions, resources,
         subsystem content. Works with any metadata XML (catalogs, documents,
         registers, subsystems, etc.).
 
+        Accepts both direct XML paths and directory paths:
+          parse_object_xml('Documents/Name/Ext/Document.xml')  — direct
+          parse_object_xml('Documents/Name')                    — auto-resolves
+
         Returns: dict with keys like name, synonym, attributes, tabular_sections,
         dimensions, resources (depends on metadata type)."""
-        content = read_file_fn(path)
+        resolved = _resolve_object_xml(path)
+        content = read_file_fn(resolved)
         return parse_metadata_xml(content)
 
     # ── Composite helpers (wrappers over existing functions) ────────
@@ -655,22 +726,20 @@ def make_bsl_helpers(
         category = exact[0].get("category", "")
         obj_name = exact[0].get("object_name", "")
         if category and obj_name:
-            for xp in [f"{category}/{obj_name}.xml", f"{category}/{obj_name}.mdo", f"{category}/{obj_name}/{obj_name}.mdo"]:
-                try:
-                    meta = parse_object_xml(xp)
-                    for attr in meta.get("attributes", []):
-                        if _match_prefix(attr["name"]):
-                            custom_attributes.append(attr)
-                    for ts in meta.get("tabular_sections", []):
-                        if _match_prefix(ts["name"]):
-                            custom_attributes.append({
-                                "name": ts["name"],
-                                "type": "TabularSection",
-                                "synonym": ts.get("synonym", ""),
-                            })
-                    break
-                except Exception:
-                    continue
+            try:
+                meta = parse_object_xml(f"{category}/{obj_name}")
+                for attr in meta.get("attributes", []):
+                    if _match_prefix(attr["name"]):
+                        custom_attributes.append(attr)
+                for ts in meta.get("tabular_sections", []):
+                    if _match_prefix(ts["name"]):
+                        custom_attributes.append({
+                            "name": ts["name"],
+                            "type": "TabularSection",
+                            "synonym": ts.get("synonym", ""),
+                        })
+            except Exception:
+                pass
 
         return {
             "object_name": object_name,
@@ -696,12 +765,10 @@ def make_bsl_helpers(
 
         metadata: dict = {}
         if category and obj_name:
-            for xp in [f"{category}/{obj_name}.xml", f"{category}/{obj_name}.mdo", f"{category}/{obj_name}/{obj_name}.mdo"]:
-                try:
-                    metadata = parse_object_xml(xp)
-                    break
-                except Exception:
-                    continue
+            try:
+                metadata = parse_object_xml(f"{category}/{obj_name}")
+            except Exception:
+                pass
 
         module_details = []
         for mod in exact:
@@ -777,6 +844,7 @@ def make_bsl_helpers(
     ) -> list[dict]:
         """Find event subscriptions, optionally filtered by object name.
         Shows what fires when an object is written/posted/deleted.
+        Uses SQLite index when available (instant), falls back to XML parsing.
 
         Args:
             object_name: Object name to filter by (case-insensitive substring
@@ -788,6 +856,20 @@ def make_bsl_helpers(
                  handler, handler_module, handler_procedure, file."""
         if object_name:
             object_name = _strip_meta_prefix(object_name)
+
+        # --- Fast path: SQLite index ---
+        if idx_reader is not None:
+            idx_result = idx_reader.get_event_subscriptions(object_name)
+            if idx_result is not None:
+                if custom_only:
+                    prefixes = _ensure_prefixes()
+                    if prefixes:
+                        idx_result = [
+                            s for s in idx_result
+                            if any(s["name"].lower().startswith(p) for p in prefixes)
+                        ]
+                return idx_result
+
         all_subs = _ensure_event_subscriptions()
 
         if not object_name:
@@ -862,6 +944,7 @@ def make_bsl_helpers(
 
     def find_scheduled_jobs(name: str = "") -> list[dict]:
         """Find scheduled (background) jobs, optionally filtered by name.
+        Uses SQLite index when available (instant), falls back to XML parsing.
 
         Args:
             name: Name substring to filter by (case-insensitive). Empty = all.
@@ -870,6 +953,13 @@ def make_bsl_helpers(
                  handler_module, handler_procedure, use, predefined, file."""
         if name:
             name = _strip_meta_prefix(name)
+
+        # --- Fast path: SQLite index ---
+        if idx_reader is not None:
+            idx_result = idx_reader.get_scheduled_jobs(name)
+            if idx_result is not None:
+                return idx_result
+
         all_jobs = _ensure_scheduled_jobs()
         if not name:
             return all_jobs
@@ -1186,20 +1276,27 @@ def make_bsl_helpers(
     def find_functional_options(object_name: str) -> dict:
         """Find functional options that affect a given object.
         Also greps BSL modules for ПолучитьФункциональнуюОпцию("X") pattern.
+        Uses SQLite index for XML options when available.
 
         Args:
             object_name: Object name to search for in FO content lists.
 
         Returns: dict with object, xml_options, code_options."""
         object_name = _strip_meta_prefix(object_name)
-        all_fo = _ensure_functional_options()
 
-        name_lower = object_name.lower()
-        xml_options: list[dict] = []
-        for fo in all_fo:
-            matched = any(name_lower in c.lower() for c in fo.get("content", []))
-            if matched:
-                xml_options.append(dict(fo))
+        # --- Fast path for xml_options: SQLite index ---
+        xml_options: list[dict] | None = None
+        if idx_reader is not None:
+            xml_options = idx_reader.get_functional_options(object_name)
+
+        if xml_options is None:
+            all_fo = _ensure_functional_options()
+            name_lower = object_name.lower()
+            xml_options = []
+            for fo in all_fo:
+                matched = any(name_lower in c.lower() for c in fo.get("content", []))
+                if matched:
+                    xml_options.append(dict(fo))
 
         # Grep for ПолучитьФункциональнуюОпцию in BSL code
         code_options: list[dict] = []
@@ -1265,6 +1362,23 @@ def make_bsl_helpers(
                 })
 
         return {"object": object_name, "roles": roles}
+
+    # ── FTS search (requires SQLite index with FTS5) ────────────
+
+    def search_methods(query: str, limit: int = 30) -> list[dict]:
+        """Full-text search for methods by name substring (FTS5 trigram).
+        Requires a pre-built SQLite index with FTS enabled.
+
+        Args:
+            query: Search substring (e.g. 'Провед', 'ОбработкаЗаполнения').
+            limit: Max results (default 30).
+
+        Returns: list of dicts {name, type, is_export, line, end_line, params,
+                 module_path, object_name, rank} ordered by relevance.
+                 Empty list if index/FTS not available."""
+        if idx_reader is not None and idx_reader.has_fts:
+            return idx_reader.search_methods(query, limit)
+        return []
 
     # ── Help (uses _registry for recipes) ──────────────────────
 
@@ -1512,9 +1626,11 @@ def make_bsl_helpers(
          ["caller", "call graph", "граф", "вызов", "вызыва",
           "кто вызывает", "find_callers"],
          "BUILD CALL GRAPH:\n"
+         "  # With index: instant across the whole codebase, hint is optional\n"
+         "  # Without index: parallel file scan, hint narrows scope\n"
          "  exports = find_exports('path/to/Module.bsl')\n"
          "  for e in exports:\n"
-         "      data = find_callers_context(e['name'], 'ModuleHint', 0, 20)\n"
+         "      data = find_callers_context(e['name'], '', 0, 50)\n"
          "      for c in data['callers']:\n"
          "          print(e['name'], '<-', c['caller_name'], c['file'], 'line:', c['line'])\n"
          "      if data['_meta']['has_more']:\n"
@@ -1542,10 +1658,9 @@ def make_bsl_helpers(
           "измерен", "ресурс", "resource", "табличн", "tabular",
           "xml", "parse_object"],
          "READ METADATA:\n"
-         "  # CF XML paths: Catalogs/Name/Ext/Catalog.xml,\n"
-         "  #   Documents/Name/Ext/Document.xml,\n"
-         "  #   InformationRegisters/Name/Ext/RecordSet.xml\n"
-         "  meta = parse_object_xml('path/to/Object.xml')\n"
+         "  # Accepts directory or XML path — auto-resolves:\n"
+         "  meta = parse_object_xml('Documents/РеализацияТоваровУслуг')  # directory\n"
+         "  meta = parse_object_xml('Documents/Name/Ext/Document.xml')   # direct XML\n"
          "  for key in meta:\n"
          "      print(key, ':', meta[key])")
     _reg("find_enum_values", find_enum_values,
@@ -1617,6 +1732,7 @@ def make_bsl_helpers(
          ["подписк", "subscription", "событи", "event",
           "BeforeWrite", "OnWrite", "ПриЗаписи", "ПередЗаписью"],
          "FIND EVENT SUBSCRIPTIONS (what fires on document write/post):\n"
+         "  # With index: instant. Without: parses XML on first call.\n"
          "  subs = find_event_subscriptions('АвансовыйОтчет')\n"
          "  for s in subs:\n"
          "      print(f\"{s['event']}: {s['handler']} ({s['name']})\")")
@@ -1625,6 +1741,7 @@ def make_bsl_helpers(
          "business",
          ["регламент", "schedule", "job", "задани", "фонов", "background"],
          "FIND SCHEDULED JOBS:\n"
+         "  # With index: instant. Without: parses XML on first call.\n"
          "  jobs = find_scheduled_jobs('Курс')\n"
          "  for j in jobs:\n"
          "      print(f\"{j['name']}: {j['method_name']} (active={j['use']})\")")
@@ -1671,6 +1788,7 @@ def make_bsl_helpers(
          ["функциональн", "опци", "functional", "option",
           "включен", "выключен"],
          "FIND FUNCTIONAL OPTIONS:\n"
+         "  # With index: XML options instant. Code grep still runs live.\n"
          "  result = find_functional_options('РеализацияТоваровУслуг')\n"
          "  for fo in result['xml_options']:\n"
          "      print(f\"  {fo['name']}: {fo['synonym']}\")\n"
@@ -1704,6 +1822,19 @@ def make_bsl_helpers(
          "  print(f\"Строк: {m['total_lines']} (код: {m['code_lines']}, комментарии: {m['comment_lines']})\")\n"
          "  print(f\"Процедур: {m['procedures_count']}, экспортных: {m['exports_count']}\")\n"
          "  print(f\"Средний размер: {m['avg_proc_size']} строк, макс. вложенность: {m['max_nesting']}\")")
+
+    _reg("search_methods", search_methods,
+         "search_methods(query, limit=30) -> [{name, type, is_export, module_path, object_name, rank}]",
+         "discovery",
+         ["поиск метод", "search", "fts", "full-text", "найти метод", "подстрок"],
+         "SEARCH METHODS BY NAME (FTS5, requires pre-built index with --no-fts NOT set):\n"
+         "  # Find methods by substring across the entire codebase — instant\n"
+         "  results = search_methods('ОбработкаЗаполнения')\n"
+         "  for r in results:\n"
+         "      print(f\"  {r['name']} ({r['type']}) export={r['is_export']} in {r['module_path']}\")\n"
+         "  # Returns [] if index or FTS not available\n"
+         "  # Combine with read_procedure() to read found methods:\n"
+         "  #   body = read_procedure(r['module_path'], r['name'])")
 
     _reg("detect_extensions", detect_extensions,
          "detect_extensions() -> {config_role, nearby_extensions, nearby_main, warnings}",

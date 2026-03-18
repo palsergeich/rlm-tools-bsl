@@ -67,7 +67,37 @@ try {
 }
 
 Write-Host ""
-Write-Host "=== Step 2: Clean cache & rebuild ===" -ForegroundColor Cyan
+Write-Host "=== Step 2: Clean stale installs & rebuild ===" -ForegroundColor Cyan
+
+# Remove stale dist-info and .pth from user site-packages (Roaming)
+# and dangling ~*dist-info from global site-packages.
+# These leftovers can shadow the correct version after reinstall.
+$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
+$exePath = if ($pythonCmd) { $pythonCmd.Source } else { "python" }
+$globalSitePackages = & $exePath -c "import site; print(site.getsitepackages()[0])" 2>$null
+$userSitePackages = & $exePath -c "import site; print(site.getusersitepackages())" 2>$null
+
+foreach ($sp in @($globalSitePackages, $userSitePackages)) {
+    if (-not $sp -or -not (Test-Path $sp)) { continue }
+    # Remove dangling ~*rlm* dirs (failed uninstalls) and old dist-info
+    Get-ChildItem -Path $sp -Directory -Filter "*rlm_tools_bsl*" -ErrorAction SilentlyContinue | ForEach-Object {
+        Write-Host "  Removing stale: $($_.FullName)" -ForegroundColor Yellow
+        Remove-Item -Recurse -Force $_.FullName
+    }
+    # Remove stale .pth files
+    Get-ChildItem -Path $sp -File -Filter "*rlm_tools_bsl*" -ErrorAction SilentlyContinue | ForEach-Object {
+        Write-Host "  Removing stale: $($_.FullName)" -ForegroundColor Yellow
+        Remove-Item -Force $_.FullName
+    }
+}
+
+# Remove stale dist/ from source tree (can confuse uv)
+$distDir = Join-Path $PSScriptRoot "dist"
+if (Test-Path $distDir) {
+    Write-Host "  Removing stale dist/: $distDir" -ForegroundColor Yellow
+    Remove-Item -Recurse -Force $distDir
+}
+
 & uv cache clean rlm-tools-bsl
 $uvInstallArgs = @("tool", "install", "${PSScriptRoot}[service]", "--force", "--reinstall")
 if ($NativeTls) { $uvInstallArgs += "--native-tls" }
