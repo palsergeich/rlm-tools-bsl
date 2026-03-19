@@ -15,6 +15,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
 from pathlib import Path
+from typing import NamedTuple
 
 from rlm_tools_bsl.bsl_knowledge import BSL_PATTERNS
 from rlm_tools_bsl.cache import _paths_hash
@@ -141,6 +142,29 @@ CREATE TABLE IF NOT EXISTS functional_options (
     file TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_fo_name ON functional_options(name);
+
+-- Level-3: role rights (normalized, one row per right)
+CREATE TABLE IF NOT EXISTS role_rights (
+    id INTEGER PRIMARY KEY,
+    role_name TEXT NOT NULL,
+    object_name TEXT NOT NULL,
+    right_name TEXT NOT NULL,
+    file TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_rr_object ON role_rights(object_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_rr_role ON role_rights(role_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_rr_right ON role_rights(right_name);
+
+-- Level-3: register movements (in-band, extracted during BSL processing)
+CREATE TABLE IF NOT EXISTS register_movements (
+    id INTEGER PRIMARY KEY,
+    document_name TEXT NOT NULL,
+    register_name TEXT NOT NULL,
+    source TEXT DEFAULT 'code',
+    file TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_rm_document ON register_movements(document_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_rm_register ON register_movements(register_name COLLATE NOCASE);
 """
 
 
@@ -179,13 +203,141 @@ def get_index_db_path(base_path: str) -> Path:
 # ---------------------------------------------------------------------------
 # Freshness check
 # ---------------------------------------------------------------------------
-def check_index_freshness(
+def _read_index_meta(db_path: Path) -> dict[str, str] | None:
+    """Read index_meta table from SQLite. Returns None on any error."""
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+    except sqlite3.Error:
+        return None
+    try:
+        meta: dict[str, str] = {}
+        for row in conn.execute("SELECT key, value FROM index_meta"):
+            meta[row["key"]] = row["value"]
+        return meta
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
+def _check_age(meta: dict[str, str]) -> IndexStatus | None:
+    """Return STALE_AGE if index exceeds max age, else None."""
+    max_age_days = int(os.environ.get("RLM_INDEX_MAX_AGE_DAYS", "7"))
+    built_at = meta.get("built_at")
+    if built_at is not None:
+        age_days = (time.time() - float(built_at)) / 86400
+        if age_days > max_age_days:
+            return IndexStatus.STALE_AGE
+    return None
+
+
+def _check_content_sample(db_path: Path, base_path: str) -> IndexStatus | None:
+    """Sample random modules and compare mtime+size. Returns STALE_CONTENT or None."""
+    sample_size = int(os.environ.get("RLM_INDEX_SAMPLE_SIZE", "5"))
+    sample_threshold = int(os.environ.get("RLM_INDEX_SAMPLE_THRESHOLD", "30"))
+
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+    except sqlite3.Error:
+        return None
+
+    try:
+        row = conn.execute("SELECT COUNT(*) AS cnt FROM modules").fetchone()
+        total_modules = row["cnt"] if row else 0
+
+        if total_modules < sample_threshold:
+            return None
+
+        rows = conn.execute(
+            "SELECT rel_path, mtime, size FROM modules ORDER BY RANDOM() LIMIT ?",
+            (sample_size,),
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+    if not rows:
+        return None
+
+    base = Path(base_path)
+
+    def _stat_check(r: sqlite3.Row) -> bool:
+        """Return True if mismatch detected."""
+        full_path = base / r["rel_path"]
+        try:
+            st = full_path.stat()
+            return abs(st.st_mtime - r["mtime"]) > 1.0 or st.st_size != r["size"]
+        except OSError:
+            return True
+
+    if len(rows) > 1:
+        from concurrent.futures import ThreadPoolExecutor as _TP
+        with _TP(max_workers=min(5, len(rows))) as pool:
+            results = list(pool.map(_stat_check, rows))
+        mismatches = sum(results)
+    else:
+        mismatches = 1 if _stat_check(rows[0]) else 0
+
+    if mismatches > max(1, len(rows) // 5):
+        return IndexStatus.STALE_CONTENT
+    return None
+
+
+def check_index_usable(
+    db_path: str | Path,
+    base_path: str,
+) -> IndexStatus:
+    """Lightweight freshness check for rlm_start (no rglob needed).
+
+    Checks:
+      1. File exists
+      2. Age: RLM_INDEX_MAX_AGE_DAYS (default 7)
+      3. Content sampling: random mtime+size on a small sample (default 5),
+         skipped if index is younger than RLM_INDEX_SKIP_SAMPLE_HOURS (default 24)
+
+    Structural drift (files added/removed) is NOT checked here — use
+    check_index_strict() or compare format_info.bsl_file_count with
+    index_meta bsl_count separately.
+    """
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return IndexStatus.MISSING
+
+    meta = _read_index_meta(db_path)
+    if meta is None:
+        return IndexStatus.MISSING
+
+    # --- Age check ---
+    age_status = _check_age(meta)
+    if age_status is not None:
+        return age_status
+
+    # --- Skip sampling for young indexes ---
+    skip_hours = int(os.environ.get("RLM_INDEX_SKIP_SAMPLE_HOURS", "24"))
+    built_at = meta.get("built_at")
+    if built_at is not None:
+        age_hours = (time.time() - float(built_at)) / 3600
+        if age_hours < skip_hours:
+            return IndexStatus.FRESH
+
+    # --- Content sampling (parallel stat) ---
+    content_status = _check_content_sample(db_path, base_path)
+    if content_status is not None:
+        return content_status
+
+    return IndexStatus.FRESH
+
+
+def check_index_strict(
     db_path: str | Path,
     current_bsl_count: int,
     current_paths_hash: str,
     base_path: str,
 ) -> IndexStatus:
-    """Check whether an existing index is still valid.
+    """Full freshness check for CLI ``index info`` (requires rglob data).
 
     Checks:
       1. File exists
@@ -197,75 +349,34 @@ def check_index_freshness(
     if not db_path.exists():
         return IndexStatus.MISSING
 
-    try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
-    except sqlite3.Error:
+    meta = _read_index_meta(db_path)
+    if meta is None:
         return IndexStatus.MISSING
 
-    try:
-        cur = conn.cursor()
-        meta: dict[str, str] = {}
-        try:
-            for row in cur.execute("SELECT key, value FROM index_meta"):
-                meta[row["key"]] = row["value"]
-        except sqlite3.Error:
-            return IndexStatus.MISSING
+    # --- Structural check ---
+    stored_count = meta.get("bsl_count")
+    stored_hash = meta.get("paths_hash")
+    if stored_count is None or stored_hash is None:
+        return IndexStatus.STALE
 
-        # --- Structural check ---
-        stored_count = meta.get("bsl_count")
-        stored_hash = meta.get("paths_hash")
-        if stored_count is None or stored_hash is None:
-            return IndexStatus.STALE
+    if int(stored_count) != current_bsl_count or stored_hash != current_paths_hash:
+        return IndexStatus.STALE
 
-        if int(stored_count) != current_bsl_count or stored_hash != current_paths_hash:
-            return IndexStatus.STALE
+    # --- Age check ---
+    age_status = _check_age(meta)
+    if age_status is not None:
+        return age_status
 
-        # --- Age check ---
-        max_age_days = int(os.environ.get("RLM_INDEX_MAX_AGE_DAYS", "7"))
-        built_at = meta.get("built_at")
-        if built_at is not None:
-            age_days = (time.time() - float(built_at)) / 86400
-            if age_days > max_age_days:
-                return IndexStatus.STALE_AGE
+    # --- Content sampling ---
+    content_status = _check_content_sample(db_path, base_path)
+    if content_status is not None:
+        return content_status
 
-        # --- Content sampling (mtime + size) ---
-        sample_size = int(os.environ.get("RLM_INDEX_SAMPLE_SIZE", "20"))
-        sample_threshold = int(os.environ.get("RLM_INDEX_SAMPLE_THRESHOLD", "30"))
+    return IndexStatus.FRESH
 
-        # Only sample if there are enough modules
-        total_modules = 0
-        try:
-            row = cur.execute("SELECT COUNT(*) AS cnt FROM modules").fetchone()
-            total_modules = row["cnt"] if row else 0
-        except sqlite3.Error:
-            pass
 
-        if total_modules >= sample_threshold:
-            # Random sample from modules table
-            rows = cur.execute(
-                "SELECT rel_path, mtime, size FROM modules ORDER BY RANDOM() LIMIT ?",
-                (sample_size,),
-            ).fetchall()
-
-            base = Path(base_path)
-            mismatches = 0
-            for row in rows:
-                full_path = base / row["rel_path"]
-                try:
-                    st = full_path.stat()
-                    if abs(st.st_mtime - row["mtime"]) > 1.0 or st.st_size != row["size"]:
-                        mismatches += 1
-                except OSError:
-                    mismatches += 1
-
-            # If more than 20% of sample mismatches, content is stale
-            if mismatches > max(1, len(rows) // 5):
-                return IndexStatus.STALE_CONTENT
-
-        return IndexStatus.FRESH
-    finally:
-        conn.close()
+# Backward-compatible alias
+check_index_freshness = check_index_strict
 
 
 # ---------------------------------------------------------------------------
@@ -652,16 +763,62 @@ def _insert_metadata_tables(conn: sqlite3.Connection, tables: dict[str, list[tup
         )
 
 
+# ---------------------------------------------------------------------------
+# Regex for register movements (in-band extraction from Document BSL)
+# ---------------------------------------------------------------------------
+_MOVEMENTS_RE = re.compile(r'\u0414\u0432\u0438\u0436\u0435\u043d\u0438\u044f\.(\w+)')  # Движения.RegName
+_ERP_MECHANISM_RE = re.compile(
+    r'\u041c\u0435\u0445\u0430\u043d\u0438\u0437\u043c\u044b\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430'
+    r'\.\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c\(\s*"(\w+)"'
+)  # МеханизмыДокумента.Добавить("RegName")
+_MANAGER_TABLE_RE = re.compile(
+    r'\u0422\u0435\u043a\u0441\u0442\u0417\u0430\u043f\u0440\u043e\u0441\u0430'
+    r'\u0422\u0430\u0431\u043b\u0438\u0446\u0430(\w+)'
+)  # ТекстЗапросаТаблицаRegName
+
+
+class FileResult(NamedTuple):
+    """Result of processing a single .bsl file."""
+    info: BslFileInfo
+    mtime: float
+    size: int
+    methods: list[dict]
+    raw_calls: list[tuple[int, str, int]]
+    movements: list[tuple[str, str, str]]  # (register_name, source, rel_path)
+
+
+def _extract_movements(
+    content: str, info: BslFileInfo, rel_path: str,
+) -> list[tuple[str, str, str]]:
+    """Extract register movements from Document modules (in-band, no extra I/O)."""
+    if info.category != "Documents":
+        return []
+    if info.module_type not in ("ObjectModule", "ManagerModule"):
+        return []
+
+    results: list[tuple[str, str, str]] = []
+
+    if info.module_type == "ObjectModule":
+        for m in _MOVEMENTS_RE.finditer(content):
+            results.append((m.group(1), "code", rel_path))
+    elif info.module_type == "ManagerModule":
+        for m in _ERP_MECHANISM_RE.finditer(content):
+            results.append((m.group(1), "erp_mechanism", rel_path))
+        for m in _MANAGER_TABLE_RE.finditer(content):
+            results.append((m.group(1), "manager_table", rel_path))
+
+    return results
+
+
 def _process_single_file(
     file_path: Path,
     base_path: str,
     build_calls: bool,
-) -> tuple[BslFileInfo, float, int, list[dict], list[tuple[int, str, int]]] | None:
-    """Process a single .bsl file: parse metadata, methods, and optionally calls.
+) -> FileResult | None:
+    """Process a single .bsl file: parse metadata, methods, optionally calls and movements.
 
     Returns:
-        (info, mtime, size, methods, raw_calls) or None on error.
-        raw_calls: list of (method_index_in_methods, callee_name, line).
+        FileResult namedtuple or None on error.
     """
     try:
         st = file_path.stat()
@@ -689,7 +846,129 @@ def _process_single_file(
             for callee_name, call_line in _extract_calls_from_body(lines, start, end):
                 raw_calls.append((method_idx, callee_name, call_line))
 
-    return info, mtime, size, methods, raw_calls
+    # In-band: extract register movements from Document modules (no extra I/O)
+    rel_path = info.relative_path
+    movements = _extract_movements(content, info, rel_path)
+
+    return FileResult(info, mtime, size, methods, raw_calls, movements)
+
+
+# ---------------------------------------------------------------------------
+# Regex-based role rights parsing (4x faster than ElementTree)
+# ---------------------------------------------------------------------------
+# Both CF (Rights.xml) and EDT (.rights) use the same XML format:
+#   <object>
+#     <name>Category.ObjectName</name>
+#     <right><name>Read</name><value>true</value></right>
+#   </object>
+_OBJECT_BLOCK_RE = re.compile(r'<object>(.*?)</object>', re.DOTALL)
+_OBJECT_NAME_RE = re.compile(r'<name>(.+?)</name>')
+_RIGHT_ENTRY_RE = re.compile(
+    r'<right>\s*<name>(\w+)</name>\s*<value>(true|false)</value>\s*</right>',
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _parse_role_rights_regex(
+    content: str, role_name: str, file_path: str,
+) -> list[tuple[str, str, str, str]]:
+    """Parse role rights using regex. Returns list of (role_name, object_name, right_name, file)."""
+    results: list[tuple[str, str, str, str]] = []
+
+    for block_m in _OBJECT_BLOCK_RE.finditer(content):
+        block = block_m.group(1)
+        obj_m = _OBJECT_NAME_RE.search(block)
+        if not obj_m:
+            continue
+        full_name = obj_m.group(1).strip()
+        # Extract object name: "Catalog.MyObj" -> "MyObj", "Subsystem.A.Subsystem.B" -> "B"
+        obj_name = full_name.rsplit(".", 1)[-1] if "." in full_name else full_name
+
+        for right_m in _RIGHT_ENTRY_RE.finditer(block):
+            if right_m.group(2).lower() == "true":
+                results.append((role_name, obj_name, right_m.group(1), file_path))
+
+    return results
+
+
+def _collect_role_rights(base_path: str) -> list[tuple[str, str, str, str]]:
+    """Collect role rights from all Roles directories.
+
+    Returns list of (role_name, object_name, right_name, file_path).
+    """
+    import glob as glob_mod
+
+    base = Path(base_path)
+    all_results: list[tuple[str, str, str, str]] = []
+
+    # Find all rights files
+    rights_files: list[tuple[str, Path]] = []
+
+    # CF format: Roles/*/Ext/Rights.xml
+    for f in base.glob("**/Roles/*/Ext/Rights.xml"):
+        role_name = f.parent.parent.name
+        rights_files.append((role_name, f))
+
+    # EDT format: Roles/*/*.rights
+    for f in base.glob("**/Roles/*/*.rights"):
+        role_name = f.parent.name
+        rights_files.append((role_name, f))
+
+    def _process_rights_file(
+        item: tuple[str, Path],
+    ) -> list[tuple[str, str, str, str]]:
+        role_name, f = item
+        try:
+            content = f.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            return []
+        rel = f.relative_to(base).as_posix()
+        return _parse_role_rights_regex(content, role_name, rel)
+
+    if len(rights_files) > 1:
+        workers = min(os.cpu_count() or 4, 8)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for batch in pool.map(_process_rights_file, rights_files):
+                all_results.extend(batch)
+    elif rights_files:
+        all_results.extend(_process_rights_file(rights_files[0]))
+
+    return all_results
+
+
+# ---------------------------------------------------------------------------
+# Prefix detection from index
+# ---------------------------------------------------------------------------
+_PREFIX_RE = re.compile(r'^([a-z\u0430-\u044f\u0451]+_?)')
+
+
+def _detect_prefixes(conn: sqlite3.Connection) -> list[str]:
+    """Detect custom prefixes from object_name in modules table.
+
+    Uses the same heuristic as bsl_helpers._ensure_prefixes() but runs on
+    already-indexed data (no I/O). Returns sorted list of frequent prefixes.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT object_name FROM modules WHERE object_name IS NOT NULL"
+    ).fetchall()
+
+    prefix_counts: dict[str, int] = {}
+    for row in rows:
+        name = row[0]
+        if not name or not name[0].islower():
+            continue
+        m = _PREFIX_RE.match(name)
+        if m:
+            key = m.group(1).rstrip("_").lower()
+            if len(key) >= 2:
+                prefix_counts[key] = prefix_counts.get(key, 0) + 1
+
+    # Keep prefixes appearing 3+ times
+    frequent = sorted(
+        ((k, v) for k, v in prefix_counts.items() if v >= 3),
+        key=lambda x: -x[1],
+    )
+    return [k for k, _ in frequent]
 
 
 # ---------------------------------------------------------------------------
@@ -789,6 +1068,33 @@ class IndexBuilder:
             md_tables = _collect_metadata_tables(base_path)
             _insert_metadata_tables(conn, md_tables)
 
+        # Level-3: register movements (in-band, already extracted)
+        all_movements: list[tuple[str, str, str, str]] = []
+        for r in results:
+            if r.movements and r.info.object_name:
+                for reg_name, source, file_path_str in r.movements:
+                    all_movements.append((r.info.object_name, reg_name, source, file_path_str))
+        if all_movements:
+            conn.executemany(
+                "INSERT INTO register_movements (document_name, register_name, source, file) "
+                "VALUES (?, ?, ?, ?)",
+                all_movements,
+            )
+            conn.commit()
+            logger.info("Register movements: %d entries", len(all_movements))
+
+        # Level-3: role rights (parallel regex parsing)
+        role_rights = _collect_role_rights(base_path)
+        if role_rights:
+            conn.executemany(
+                "INSERT INTO role_rights (role_name, object_name, right_name, file) "
+                "VALUES (?, ?, ?, ?)",
+                role_rights,
+            )
+            conn.commit()
+            logger.info("Role rights: %d entries from %d roles",
+                       len(role_rights), len(set(r[0] for r in role_rights)))
+
         # FTS5 full-text search index for methods
         if build_fts:
             conn.execute(
@@ -801,9 +1107,13 @@ class IndexBuilder:
                 "FROM methods m JOIN modules mod ON mod.id = m.module_id"
             )
 
+        # Detect custom prefixes from object names in index
+        detected_prefixes = _detect_prefixes(conn)
+
         self._write_meta(
             conn, base_path, total_files, paths_hash,
             build_calls, build_metadata, config_meta, build_fts,
+            detected_prefixes=detected_prefixes,
         )
 
         conn.execute("ANALYZE")
@@ -811,8 +1121,8 @@ class IndexBuilder:
         conn.close()
 
         elapsed = time.time() - t0
-        total_methods = sum(len(r[3]) for r in results)
-        total_calls = sum(len(r[4]) for r in results)
+        total_methods = sum(len(r.methods) for r in results)
+        total_calls = sum(len(r.raw_calls) for r in results)
         logger.info(
             "Index built: %d modules, %d methods, %d calls in %.1fs (%.0f files/sec)",
             len(results), total_methods, total_calls,
@@ -903,7 +1213,7 @@ class IndexBuilder:
             return {"added": 0, "changed": 0, "removed": 0}
 
         # Process new/changed files
-        results: list[tuple[BslFileInfo, float, int, list[dict], list[tuple[int, str, int]]]] = []
+        results: list[FileResult] = []
         if to_add:
             workers = min(os.cpu_count() or 4, 8)
             with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -954,7 +1264,7 @@ class IndexBuilder:
 
             # Update FTS for newly inserted methods
             if has_fts and results:
-                new_rel_paths = [r[0].relative_path for r in results]
+                new_rel_paths = [r.info.relative_path for r in results]
                 placeholders = ",".join("?" * len(new_rel_paths))
                 conn.execute(
                     f"INSERT INTO methods_fts(rowid, name, object_name) "
@@ -963,6 +1273,35 @@ class IndexBuilder:
                     f"WHERE mod.rel_path IN ({placeholders})",
                     new_rel_paths,
                 )
+
+            # Update register_movements for changed/added Document modules
+            if results:
+                # Collect document names that need refresh
+                changed_doc_names = set()
+                for r in results:
+                    if r.info.category == "Documents" and r.info.object_name:
+                        changed_doc_names.add(r.info.object_name)
+                # Remove old movements for changed documents
+                for doc_name in changed_doc_names:
+                    try:
+                        conn.execute(
+                            "DELETE FROM register_movements WHERE document_name = ?",
+                            (doc_name,),
+                        )
+                    except sqlite3.OperationalError:
+                        pass
+                # Insert new movements
+                new_movements: list[tuple[str, str, str, str]] = []
+                for r in results:
+                    if r.movements and r.info.object_name:
+                        for reg_name, source, fpath in r.movements:
+                            new_movements.append((r.info.object_name, reg_name, source, fpath))
+                if new_movements:
+                    conn.executemany(
+                        "INSERT INTO register_movements "
+                        "(document_name, register_name, source, file) VALUES (?, ?, ?, ?)",
+                        new_movements,
+                    )
 
             # Update meta
             new_paths_hash = _paths_hash(sorted(disk_files.keys()))
@@ -1025,21 +1364,21 @@ class IndexBuilder:
     @staticmethod
     def _bulk_insert(
         conn: sqlite3.Connection,
-        results: list[tuple[BslFileInfo, float, int, list[dict], list[tuple[int, str, int]]]],
+        results: list[FileResult],
         build_calls: bool,
     ) -> None:
         """Insert modules, methods, and calls in batch."""
         module_rows: list[tuple] = []
-        for info, mtime, size, _methods, _calls in results:
+        for r in results:
             module_rows.append((
-                info.relative_path,
-                info.category,
-                info.object_name,
-                info.module_type,
-                info.form_name,
-                1 if info.is_form_module else 0,
-                mtime,
-                size,
+                r.info.relative_path,
+                r.info.category,
+                r.info.object_name,
+                r.info.module_type,
+                r.info.form_name,
+                1 if r.info.is_form_module else 0,
+                r.mtime,
+                r.size,
             ))
 
         conn.executemany(
@@ -1069,11 +1408,11 @@ class IndexBuilder:
         # We need to track method insertions to map method_idx -> method_id for calls
         call_pending: list[tuple[str, int, str, int]] = []  # (rel_path, method_idx, callee, line)
 
-        for info, _mtime, _size, methods, raw_calls in results:
-            mod_id = path_to_id.get(info.relative_path)
+        for r in results:
+            mod_id = path_to_id.get(r.info.relative_path)
             if mod_id is None:
                 continue
-            for method in methods:
+            for method in r.methods:
                 method_rows.append((
                     mod_id,
                     method["name"],
@@ -1085,8 +1424,8 @@ class IndexBuilder:
                     method.get("loc"),
                 ))
             if build_calls:
-                for method_idx, callee_name, call_line in raw_calls:
-                    call_pending.append((info.relative_path, method_idx, callee_name, call_line))
+                for method_idx, callee_name, call_line in r.raw_calls:
+                    call_pending.append((r.info.relative_path, method_idx, callee_name, call_line))
 
         conn.executemany(
             "INSERT OR REPLACE INTO methods "
@@ -1107,13 +1446,13 @@ class IndexBuilder:
                 methods_by_module.setdefault(modid, []).append(mid)
 
             call_rows: list[tuple] = []
-            for info, _mtime, _size, methods, _raw_calls in results:
-                mod_id = path_to_id.get(info.relative_path)
+            for r in results:
+                mod_id = path_to_id.get(r.info.relative_path)
                 if mod_id is None:
                     continue
                 method_ids = methods_by_module.get(mod_id, [])
 
-                for method_idx, callee_name, call_line in _raw_calls:
+                for method_idx, callee_name, call_line in r.raw_calls:
                     if method_idx < len(method_ids):
                         caller_method_id = method_ids[method_idx]
                         call_rows.append((caller_method_id, callee_name, call_line))
@@ -1134,6 +1473,7 @@ class IndexBuilder:
         build_metadata: bool = False,
         config_meta: dict[str, str] | None = None,
         build_fts: bool = False,
+        detected_prefixes: list[str] | None = None,
     ) -> None:
         """Write index metadata."""
         meta_entries = [
@@ -1151,6 +1491,12 @@ class IndexBuilder:
         if config_meta:
             for key, value in config_meta.items():
                 meta_entries.append((key, value))
+
+        # Detected custom prefixes
+        if detected_prefixes:
+            meta_entries.append(("detected_prefixes", json.dumps(
+                detected_prefixes, ensure_ascii=False,
+            )))
 
         conn.executemany(
             "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
@@ -1359,6 +1705,142 @@ class IndexReader:
                 for r in rows
             ]
 
+    def get_register_movements(self, document_name: str) -> list[dict] | None:
+        """Get register movements for a given document.
+
+        Returns list of {register_name, source, file} or None if table empty/missing.
+        """
+        with self._lock:
+            try:
+                rows = self._conn.execute(
+                    "SELECT register_name, source, file "
+                    "FROM register_movements WHERE document_name = ? COLLATE NOCASE",
+                    (document_name,),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return None
+
+            if not rows:
+                try:
+                    cnt = self._conn.execute(
+                        "SELECT COUNT(*) AS cnt FROM register_movements"
+                    ).fetchone()
+                    if cnt and cnt["cnt"] == 0:
+                        return None
+                except sqlite3.Error:
+                    return None
+
+            return [
+                {"register_name": r["register_name"], "source": r["source"], "file": r["file"]}
+                for r in rows
+            ]
+
+    def get_register_writers(self, register_name: str) -> list[dict] | None:
+        """Get documents that write to a given register.
+
+        Returns list of {document_name, source, file} or None if table empty/missing.
+        """
+        with self._lock:
+            try:
+                rows = self._conn.execute(
+                    "SELECT document_name, source, file "
+                    "FROM register_movements WHERE register_name = ? COLLATE NOCASE",
+                    (register_name,),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return None
+
+            if not rows:
+                try:
+                    cnt = self._conn.execute(
+                        "SELECT COUNT(*) AS cnt FROM register_movements"
+                    ).fetchone()
+                    if cnt and cnt["cnt"] == 0:
+                        return None
+                except sqlite3.Error:
+                    return None
+
+            return [
+                {"document_name": r["document_name"], "source": r["source"], "file": r["file"]}
+                for r in rows
+            ]
+
+    def get_roles(self, object_name: str) -> list[dict] | None:
+        """Get roles that grant rights to a given object.
+
+        Returns list of {role_name, object_name, right_name, file} or None
+        if role_rights table is empty/missing.
+        """
+        with self._lock:
+            try:
+                rows = self._conn.execute(
+                    "SELECT role_name, object_name, right_name, file "
+                    "FROM role_rights WHERE object_name = ? COLLATE NOCASE",
+                    (object_name,),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return None
+
+            if not rows:
+                # Check if the table has any data at all
+                try:
+                    cnt = self._conn.execute(
+                        "SELECT COUNT(*) AS cnt FROM role_rights"
+                    ).fetchone()
+                    if cnt and cnt["cnt"] == 0:
+                        return None
+                except sqlite3.Error:
+                    return None
+
+            # Group by role_name
+            role_map: dict[str, dict] = {}
+            for r in rows:
+                key = r["role_name"]
+                if key not in role_map:
+                    role_map[key] = {
+                        "role_name": r["role_name"],
+                        "object": r["object_name"],
+                        "rights": [],
+                        "file": r["file"],
+                    }
+                role_map[key]["rights"].append(r["right_name"])
+            return list(role_map.values())
+
+    def get_detected_prefixes(self) -> list[str]:
+        """Return detected custom prefixes from index_meta, or empty list."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM index_meta WHERE key = 'detected_prefixes'"
+            ).fetchone()
+            if row and row["value"]:
+                try:
+                    return json.loads(row["value"])
+                except (json.JSONDecodeError, TypeError):
+                    return []
+            return []
+
+    def get_all_modules(self) -> list[dict]:
+        """Return all modules from the index for fast _index_state init.
+
+        Returns:
+            list of dicts {rel_path, category, object_name, module_type, form_name}.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT rel_path, category, object_name, module_type, form_name "
+                "FROM modules"
+            ).fetchall()
+            return [
+                {
+                    "rel_path": r["rel_path"],
+                    "category": r["category"],
+                    "object_name": r["object_name"],
+                    "module_type": r["module_type"],
+                    "form_name": r["form_name"],
+                }
+                for r in rows
+            ]
+
     def get_statistics(self) -> dict:
         """Get summary statistics about the index.
 
@@ -1396,7 +1878,7 @@ class IndexReader:
             # Configuration metadata from index_meta
             for key in ("config_name", "config_version", "config_synonym",
                         "config_vendor", "source_format", "config_role",
-                        "has_metadata", "has_fts"):
+                        "has_metadata", "has_fts", "bsl_count"):
                 meta_row = self._conn.execute(
                     "SELECT value FROM index_meta WHERE key = ?", (key,)
                 ).fetchone()
@@ -1406,8 +1888,20 @@ class IndexReader:
             for flag in ("has_fts", "has_metadata"):
                 stats[flag] = stats.get(flag) == "1"
 
+            # Convert bsl_count to int
+            if stats.get("bsl_count") is not None:
+                stats["bsl_count"] = int(stats["bsl_count"])
+
             # Level-2 metadata counts
             for table in ("event_subscriptions", "scheduled_jobs", "functional_options"):
+                try:
+                    row = self._conn.execute(f"SELECT COUNT(*) AS cnt FROM {table}").fetchone()  # noqa: S608
+                    stats[table] = row["cnt"] if row else 0
+                except sqlite3.Error:
+                    stats[table] = 0
+
+            # Level-3 counts
+            for table in ("role_rights", "register_movements"):
                 try:
                     row = self._conn.execute(f"SELECT COUNT(*) AS cnt FROM {table}").fetchone()  # noqa: S608
                     stats[table] = row["cnt"] if row else 0

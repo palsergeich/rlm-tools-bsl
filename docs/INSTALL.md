@@ -215,9 +215,10 @@ PowerShell -ExecutionPolicy Bypass -File .\reinstall-service.ps1
 Скрипт автоматически:
 1. Остановит и удалит службу
 2. Очистит stale-артефакты предыдущих установок (dangling dist-info, user site-packages, каталог dist/)
-3. Очистит кэш uv и пересоберет пакет
-4. Установит и запустит службу
-5. Проверит health и выведет версию
+3. Очистит кэш uv и пересоберет пакет (`uv tool install`)
+4. Обновит глобальный Python, используемый службой (`uv pip install`)
+5. Установит и запустит службу
+6. Проверит health и выведет версию
 
 **Без службы** (только CLI):
 
@@ -231,7 +232,17 @@ uv tool install ".[service]" --force --reinstall
 
 > **Важно:** Не используйте `pip install -e .` для обновления — это может установить пакет в неправильное окружение Python и сломать службу. Всегда используйте `uv tool install` или `reinstall-service.ps1`.
 
-## 5. Проверить работоспособность
+## 5. (Опционально) Построить SQLite-индекс
+
+Индекс ускоряет работу хелперов на больших конфигурациях (ERP, УТ и др.): `extract_procedures`, `find_callers_context`, `find_roles`, `find_register_movements` и другие работают мгновенно из SQLite вместо парсинга файлов.
+
+```bash
+rlm-bsl-index index build <path-to-1c-sources>
+```
+
+Подробности: [INDEXING.md](INDEXING.md)
+
+## 6. Проверить работоспособность
 
 Откройте проект с исходниками 1С в Claude Code и спросите:
 ```
@@ -245,5 +256,5 @@ uv tool install ".[service]" --force --reinstall
 git clone https://github.com/Dach-Coin/rlm-tools-bsl.git
 cd rlm-tools-bsl
 uv sync --dev
-uv run python -m pytest tests/ -q
+uv run pytest tests/ -q
 ```

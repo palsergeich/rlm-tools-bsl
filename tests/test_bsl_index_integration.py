@@ -415,3 +415,206 @@ class TestStrategyWithIndex:
     def test_strategy_without_index(self):
         strategy = get_strategy("medium", None)
         assert "== INDEX ==" not in strategy
+
+    def test_strategy_quick_check_note(self):
+        """Strategy includes quick check note when index is loaded."""
+        idx_stats = {"methods": 100, "calls": 200, "has_fts": False}
+        strategy = get_strategy("medium", None, idx_stats=idx_stats)
+        assert "quick check" in strategy
+
+
+def test_index_state_from_sqlite(tmp_bsl_project, built_index):
+    """With idx_reader, _ensure_index() loads from SQLite, not glob."""
+    bsl = _make_helpers(tmp_bsl_project, idx_reader=built_index)
+    # find_module triggers _ensure_index internally
+    modules = bsl["find_module"]("ТестовыйДокумент")
+    assert len(modules) >= 1
+    assert modules[0]["object_name"] == "ТестовыйДокумент"
+
+
+def test_detected_prefixes_in_index(tmp_bsl_project, monkeypatch):
+    """Detected prefixes are stored in index_meta and retrievable."""
+    import os
+    import tempfile
+
+    # Create a project with objects that have a common prefix (3+ for threshold)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for name in ["тст_Справочник1", "тст_Справочник2", "тст_Справочник3"]:
+            cat_dir = os.path.join(tmpdir, "Catalogs", name, "Ext")
+            os.makedirs(cat_dir)
+            with open(os.path.join(cat_dir, "ObjectModule.bsl"), "w", encoding="utf-8") as f:
+                f.write("Процедура Тест()\nКонецПроцедуры\n")
+        with open(os.path.join(tmpdir, "Configuration.xml"), "w") as f:
+            f.write("<Configuration/>")
+
+        monkeypatch.setenv("RLM_INDEX_DIR", os.path.join(tmpdir, ".index"))
+
+        builder = IndexBuilder()
+        db_path = builder.build(tmpdir)
+        reader = IndexReader(db_path)
+
+        prefixes = reader.get_detected_prefixes()
+        assert "тст" in prefixes
+        reader.close()
+
+
+RIGHTS_EDT_CONTENT = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Rights xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://v8.1c.ru/8.3/roles" xsi:type="Rights">
+  <object>
+    <name>Catalog.ТестСправочник</name>
+    <right>
+      <name>Read</name>
+      <value>true</value>
+    </right>
+    <right>
+      <name>Update</name>
+      <value>true</value>
+    </right>
+    <right>
+      <name>Delete</name>
+      <value>false</value>
+    </right>
+  </object>
+</Rights>
+"""
+
+
+def test_role_rights_build_and_query(tmp_path, monkeypatch):
+    """role_rights table is built from .rights files and queryable."""
+    # Create BSL + rights structure
+    cm_dir = tmp_path / "CommonModules" / "Модуль" / "Ext"
+    cm_dir.mkdir(parents=True)
+    (cm_dir / "Module.bsl").write_text("Процедура Тест()\nКонецПроцедуры\n", encoding="utf-8-sig")
+
+    role_dir = tmp_path / "Roles" / "ТестоваяРоль"
+    role_dir.mkdir(parents=True)
+    (role_dir / "ТестоваяРоль.rights").write_text(RIGHTS_EDT_CONTENT, encoding="utf-8")
+
+    (tmp_path / "Configuration.xml").write_text("<Configuration/>", encoding="utf-8")
+
+    monkeypatch.setenv("RLM_INDEX_DIR", str(tmp_path / ".index"))
+
+    builder = IndexBuilder()
+    db_path = builder.build(str(tmp_path))
+    reader = IndexReader(db_path)
+
+    # Check statistics
+    stats = reader.get_statistics()
+    assert stats["role_rights"] > 0
+
+    # Query roles for ТестСправочник
+    roles = reader.get_roles("ТестСправочник")
+    assert roles is not None
+    assert len(roles) == 1
+    assert roles[0]["role_name"] == "ТестоваяРоль"
+    assert "Read" in roles[0]["rights"]
+    assert "Update" in roles[0]["rights"]
+    # Delete was false, should NOT be in rights
+    assert "Delete" not in roles[0]["rights"]
+
+    reader.close()
+
+
+def test_find_roles_fast_path(tmp_path, monkeypatch):
+    """find_roles() uses index fast path when available."""
+    cm_dir = tmp_path / "CommonModules" / "Модуль" / "Ext"
+    cm_dir.mkdir(parents=True)
+    (cm_dir / "Module.bsl").write_text("Процедура Тест()\nКонецПроцедуры\n", encoding="utf-8-sig")
+
+    role_dir = tmp_path / "Roles" / "АдминРоль"
+    role_dir.mkdir(parents=True)
+    (role_dir / "АдминРоль.rights").write_text(RIGHTS_EDT_CONTENT, encoding="utf-8")
+
+    (tmp_path / "Configuration.xml").write_text("<Configuration/>", encoding="utf-8")
+
+    monkeypatch.setenv("RLM_INDEX_DIR", str(tmp_path / ".index"))
+
+    builder = IndexBuilder()
+    db_path = builder.build(str(tmp_path))
+    reader = IndexReader(db_path)
+
+    bsl = _make_helpers(tmp_path, idx_reader=reader)
+    result = bsl["find_roles"]("ТестСправочник")
+
+    assert result["object"] == "ТестСправочник"
+    assert len(result["roles"]) >= 1
+    assert result["roles"][0]["role_name"] == "АдминРоль"
+
+    reader.close()
+
+
+DOCUMENT_OBJECT_MODULE = """\
+Процедура ОбработкаПроведения(Отказ, РежимПроведения)
+    Движения.ТоварыНаСкладах.Записать = Истина;
+    Движения.ВзаиморасчетыСКлиентами.Записать = Истина;
+КонецПроцедуры
+"""
+
+DOCUMENT_MANAGER_MODULE = """\
+Процедура ЗарегистрироватьУчетныеМеханизмы(Менеджер)
+    МеханизмыДокумента.Добавить("ТоварыНаСкладах");
+    МеханизмыДокумента.Добавить("ВзаиморасчетыСКлиентами");
+КонецПроцедуры
+
+Функция ТекстЗапросаТаблицаТоварыНаСкладах()
+    Возврат "";
+КонецФункции
+"""
+
+
+def test_register_movements_build(tmp_path, monkeypatch):
+    """register_movements extracted in-band from Document modules during build."""
+    doc_dir = tmp_path / "Documents" / "Реализация" / "Ext"
+    doc_dir.mkdir(parents=True)
+    (doc_dir / "ObjectModule.bsl").write_text(DOCUMENT_OBJECT_MODULE, encoding="utf-8-sig")
+    (doc_dir / "ManagerModule.bsl").write_text(DOCUMENT_MANAGER_MODULE, encoding="utf-8-sig")
+
+    (tmp_path / "Configuration.xml").write_text("<Configuration/>", encoding="utf-8")
+
+    monkeypatch.setenv("RLM_INDEX_DIR", str(tmp_path / ".index"))
+
+    builder = IndexBuilder()
+    db_path = builder.build(str(tmp_path))
+    reader = IndexReader(db_path)
+
+    stats = reader.get_statistics()
+    assert stats["register_movements"] > 0
+
+    movements = reader.get_register_movements("Реализация")
+    assert movements is not None
+    reg_names = [m["register_name"] for m in movements]
+    assert "ТоварыНаСкладах" in reg_names
+    assert "ВзаиморасчетыСКлиентами" in reg_names
+
+    # Check register writers (reverse lookup)
+    writers = reader.get_register_writers("ТоварыНаСкладах")
+    assert writers is not None
+    assert any(w["document_name"] == "Реализация" for w in writers)
+
+    reader.close()
+
+
+def test_find_register_movements_fast_path(tmp_path, monkeypatch):
+    """find_register_movements uses index fast path when available."""
+    doc_dir = tmp_path / "Documents" / "Реализация" / "Ext"
+    doc_dir.mkdir(parents=True)
+    (doc_dir / "ObjectModule.bsl").write_text(DOCUMENT_OBJECT_MODULE, encoding="utf-8-sig")
+
+    (tmp_path / "Configuration.xml").write_text("<Configuration/>", encoding="utf-8")
+
+    monkeypatch.setenv("RLM_INDEX_DIR", str(tmp_path / ".index"))
+
+    builder = IndexBuilder()
+    db_path = builder.build(str(tmp_path))
+    reader = IndexReader(db_path)
+
+    bsl = _make_helpers(tmp_path, idx_reader=reader)
+    result = bsl["find_register_movements"]("Реализация")
+
+    assert result["document"] == "Реализация"
+    assert len(result["code_registers"]) >= 2
+    reg_names = [r["name"] for r in result["code_registers"]]
+    assert "ТоварыНаСкладах" in reg_names
+
+    reader.close()

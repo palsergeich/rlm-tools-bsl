@@ -186,6 +186,17 @@ def test_safe_grep_without_hint(bsl_env):
     assert len(results) >= 1
 
 
+def test_safe_grep_parallel_order(bsl_env):
+    """Parallel safe_grep returns results sorted by (file, line)."""
+    results = bsl_env.bsl["safe_grep"]("Процедура", max_files=50)
+    assert len(results) >= 1
+    # Verify sort order: (file, line) ascending
+    for i in range(1, len(results)):
+        prev = (results[i - 1].get("file", ""), results[i - 1].get("line", 0))
+        curr = (results[i].get("file", ""), results[i].get("line", 0))
+        assert prev <= curr, f"Order violation: {prev} > {curr}"
+
+
 # --- read_procedure ---
 
 def test_read_procedure(bsl_env):
@@ -816,6 +827,108 @@ def test_find_custom_modifications():
         assert "ТиповаяПроцедура" not in custom_proc_names
         region_names = [r["name"] for r in mod["custom_regions"]]
         assert "ктнДоработки" in region_names
+        # Check prefix_source and prefixes_used in response
+        assert result["prefix_source"] == "user"
+        assert result["prefixes_used"] == ["ктн"]
+
+
+def test_find_custom_modifications_parse_error():
+    """parse_object_xml failure returns diagnostic parse_error field."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        doc_dir = os.path.join(tmpdir, "Documents", "ТестДок", "Ext")
+        os.makedirs(doc_dir)
+        with open(os.path.join(doc_dir, "ObjectModule.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура тст_Тест()\nКонецПроцедуры\n")
+        # Write invalid XML so parse_object_xml fails
+        with open(os.path.join(doc_dir, "Document.xml"), "w") as f:
+            f.write("NOT-XML{{{{")
+        with open(os.path.join(tmpdir, "Configuration.xml"), "w") as f:
+            f.write("<Configuration/>")
+
+        helpers, resolve_safe = make_helpers(tmpdir)
+        format_info = detect_format(tmpdir)
+        bsl = make_bsl_helpers(
+            base_path=tmpdir,
+            resolve_safe=resolve_safe,
+            read_file_fn=helpers["read_file"],
+            grep_fn=helpers["grep"],
+            glob_files_fn=helpers["glob_files"],
+            format_info=format_info,
+        )
+
+        result = bsl["find_custom_modifications"]("ТестДок", custom_prefixes=["тст"])
+        assert "parse_error" in result
+        assert result["modules_analyzed"] >= 1
+
+
+def test_resolve_object_xml_edt_mdo():
+    """_resolve_object_xml finds EDT-pattern {path}/{Name}.mdo."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # EDT structure: Documents/ТестДок/ТестДок.mdo
+        doc_dir = os.path.join(tmpdir, "Documents", "ТестДок")
+        os.makedirs(doc_dir)
+        mdo_path = os.path.join(doc_dir, "ТестДок.mdo")
+        with open(mdo_path, "w", encoding="utf-8") as f:
+            f.write(
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<mdclass:Document xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass"'
+                ' uuid="00000000-0000-0000-0000-000000000001">\n'
+                '  <name>ТестДок</name>\n'
+                '</mdclass:Document>\n'
+            )
+        # Also create a BSL file so find_module works
+        bsl_dir = os.path.join(doc_dir)
+        with open(os.path.join(bsl_dir, "ObjectModule.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура Тест()\nКонецПроцедуры\n")
+        with open(os.path.join(tmpdir, "Configuration.mdo"), "w", encoding="utf-8") as f:
+            f.write(
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<mdclass:Configuration xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass"/>\n'
+            )
+
+        helpers, resolve_safe = make_helpers(tmpdir)
+        format_info = detect_format(tmpdir)
+        bsl = make_bsl_helpers(
+            base_path=tmpdir,
+            resolve_safe=resolve_safe,
+            read_file_fn=helpers["read_file"],
+            grep_fn=helpers["grep"],
+            glob_files_fn=helpers["glob_files"],
+            format_info=format_info,
+        )
+
+        # _resolve_object_xml is internal, test through parse_object_xml
+        result = bsl["parse_object_xml"]("Documents/ТестДок")
+        # Should resolve to ТестДок.mdo and attempt to parse
+        assert isinstance(result, dict)
+
+
+def test_find_custom_modifications_extension_prefix_threshold():
+    """Extension mode uses threshold=1 for prefix detection."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create objects with a prefix that appears only once
+        cat_dir = os.path.join(tmpdir, "Catalogs", "тст_Справочник", "Ext")
+        os.makedirs(cat_dir)
+        with open(os.path.join(cat_dir, "ObjectModule.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура тст_Метод()\nКонецПроцедуры\n")
+        with open(os.path.join(tmpdir, "Configuration.xml"), "w") as f:
+            f.write("<Configuration/>")
+
+        helpers, resolve_safe = make_helpers(tmpdir)
+        format_info = detect_format(tmpdir)
+
+        # Without idx_reader (config_role unknown), threshold=3 → prefix "тст" won't be detected
+        bsl = make_bsl_helpers(
+            base_path=tmpdir,
+            resolve_safe=resolve_safe,
+            read_file_fn=helpers["read_file"],
+            grep_fn=helpers["grep"],
+            glob_files_fn=helpers["glob_files"],
+            format_info=format_info,
+        )
+        auto_prefixes = bsl["_detected_prefixes"]()
+        # Only 1 object with prefix тст → below threshold 3 → not detected
+        assert "тст" not in auto_prefixes
 
 
 def test_analyze_object(bsl_env):

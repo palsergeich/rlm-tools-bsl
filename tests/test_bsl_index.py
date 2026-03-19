@@ -14,6 +14,8 @@ from rlm_tools_bsl.bsl_index import (
     IndexReader,
     IndexStatus,
     check_index_freshness,
+    check_index_strict,
+    check_index_usable,
     get_index_db_path,
     get_index_dir,
 )
@@ -811,6 +813,153 @@ class TestFreshness:
             base_path=str(tmp_path),
         )
         assert status == IndexStatus.MISSING
+
+
+# =====================================================================
+# check_index_usable tests (lightweight, no rglob)
+# =====================================================================
+
+class TestCheckIndexUsable:
+
+    def test_usable_fresh(self, built_index):
+        """Immediately after build, usable check returns FRESH."""
+        db_path, base_path = built_index
+        status = check_index_usable(db_path, base_path)
+        assert status == IndexStatus.FRESH
+
+    def test_usable_missing(self, tmp_path):
+        """Non-existent DB returns MISSING."""
+        status = check_index_usable(tmp_path / "no.db", str(tmp_path))
+        assert status == IndexStatus.MISSING
+
+    def test_usable_stale_age(self, built_index, monkeypatch):
+        """Index older than max_age_days returns STALE_AGE."""
+        db_path, base_path = built_index
+        monkeypatch.setenv("RLM_INDEX_MAX_AGE_DAYS", "0")
+        # Also need to disable skip_sample_hours to not short-circuit to FRESH
+        monkeypatch.setenv("RLM_INDEX_SKIP_SAMPLE_HOURS", "0")
+        status = check_index_usable(db_path, base_path)
+        assert status == IndexStatus.STALE_AGE
+
+    def test_usable_skip_sample_for_young_index(self, built_index, monkeypatch):
+        """Index younger than SKIP_SAMPLE_HOURS skips sampling, returns FRESH."""
+        db_path, base_path = built_index
+        monkeypatch.setenv("RLM_INDEX_SKIP_SAMPLE_HOURS", "9999")
+        status = check_index_usable(db_path, base_path)
+        assert status == IndexStatus.FRESH
+
+    def test_usable_stale_content(self, built_index, monkeypatch):
+        """Modified files trigger STALE_CONTENT."""
+        db_path, base_path = built_index
+        base = tmp_path_from_base(base_path)
+        monkeypatch.setenv("RLM_INDEX_SKIP_SAMPLE_HOURS", "0")
+        monkeypatch.setenv("RLM_INDEX_SAMPLE_SIZE", "100")
+        monkeypatch.setenv("RLM_INDEX_SAMPLE_THRESHOLD", "1")
+
+        # Modify all BSL files to trigger mtime mismatch
+        for bsl in base.rglob("*.bsl"):
+            bsl.write_text(bsl.read_text(encoding="utf-8-sig") + "\n// changed",
+                          encoding="utf-8-sig")
+
+        status = check_index_usable(db_path, base_path)
+        assert status == IndexStatus.STALE_CONTENT
+
+    def test_usable_does_not_check_structure(self, built_index):
+        """Usable check does NOT detect added files (no structural check)."""
+        db_path, base_path = built_index
+        base = tmp_path_from_base(base_path)
+
+        # Add a new file on disk
+        new_dir = base / "Catalogs" / "НовыйСправочник" / "Ext"
+        new_dir.mkdir(parents=True)
+        (new_dir / "ObjectModule.bsl").write_text(
+            "Процедура Тест() Экспорт\nКонецПроцедуры\n",
+            encoding="utf-8-sig",
+        )
+
+        # Usable check should still return FRESH (no structural check)
+        status = check_index_usable(db_path, base_path)
+        assert status == IndexStatus.FRESH
+
+
+class TestCheckIndexStrict:
+
+    def test_strict_is_alias(self):
+        """check_index_freshness is an alias for check_index_strict."""
+        assert check_index_freshness is check_index_strict
+
+    def test_strict_fresh(self, built_index):
+        """Strict check returns FRESH when everything matches."""
+        db_path, base_path = built_index
+        base = tmp_path_from_base(base_path)
+
+        bsl_files = sorted(base.rglob("*.bsl"))
+        rel_paths = [f.relative_to(base).as_posix() for f in bsl_files]
+        paths_hash = _paths_hash(rel_paths)
+
+        status = check_index_strict(db_path, len(bsl_files), paths_hash, base_path)
+        assert status == IndexStatus.FRESH
+
+    def test_strict_stale_structure(self, built_index):
+        """Strict check detects added files via structural mismatch."""
+        db_path, base_path = built_index
+        base = tmp_path_from_base(base_path)
+
+        new_dir = base / "Catalogs" / "ДополнительныйСправочник" / "Ext"
+        new_dir.mkdir(parents=True)
+        (new_dir / "ObjectModule.bsl").write_text(
+            "Процедура Тест() Экспорт\nКонецПроцедуры\n",
+            encoding="utf-8-sig",
+        )
+
+        bsl_files = sorted(base.rglob("*.bsl"))
+        rel_paths = [f.relative_to(base).as_posix() for f in bsl_files]
+        paths_hash = _paths_hash(rel_paths)
+
+        status = check_index_strict(db_path, len(bsl_files), paths_hash, base_path)
+        assert status == IndexStatus.STALE
+
+
+class TestBslCountInStats:
+
+    def test_statistics_include_bsl_count(self, built_index):
+        """get_statistics() returns bsl_count as int from index_meta."""
+        db_path, base_path = built_index
+        reader = IndexReader(db_path)
+        stats = reader.get_statistics()
+        reader.close()
+
+        assert "bsl_count" in stats
+        assert isinstance(stats["bsl_count"], int)
+        assert stats["bsl_count"] > 0
+
+
+class TestGetAllModules:
+
+    def test_get_all_modules_returns_all(self, built_index):
+        """get_all_modules() returns all modules with correct fields."""
+        db_path, base_path = built_index
+        reader = IndexReader(db_path)
+        modules = reader.get_all_modules()
+        reader.close()
+
+        assert len(modules) > 0
+        for m in modules:
+            assert "rel_path" in m
+            assert "category" in m
+            assert "object_name" in m
+            assert "module_type" in m
+            assert "form_name" in m
+
+    def test_get_all_modules_matches_count(self, built_index):
+        """get_all_modules() count matches get_statistics().modules."""
+        db_path, base_path = built_index
+        reader = IndexReader(db_path)
+        modules = reader.get_all_modules()
+        stats = reader.get_statistics()
+        reader.close()
+
+        assert len(modules) == stats["modules"]
 
 
 # =====================================================================

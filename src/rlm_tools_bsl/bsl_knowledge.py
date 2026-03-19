@@ -172,6 +172,12 @@ def get_strategy(effort: str, format_info, detected_prefixes: list[str] | None =
         instant_helpers.extend([
             "find_event_subscriptions()", "find_scheduled_jobs()", "find_functional_options()",
         ])
+        role_rights_count = idx_stats.get("role_rights", 0)
+        if role_rights_count:
+            instant_helpers.append("find_roles()")
+        register_movements_count = idx_stats.get("register_movements", 0)
+        if register_movements_count:
+            instant_helpers.extend(["find_register_movements()", "find_register_writers()"])
         idx_lines.append(f"INSTANT from index: {', '.join(instant_helpers)}.")
 
         # FTS discovery
@@ -187,6 +193,12 @@ def get_strategy(effort: str, format_info, detected_prefixes: list[str] | None =
             "  - find_callers_context() returns instantly — no need to limit scope with hint, search the whole codebase.\n"
             "  - Batch 5-10 helpers per rlm_execute (index calls are <1ms each).\n"
             "  - extract_procedures + find_exports + find_callers_context in ONE call is fine."
+        )
+
+        idx_lines.append(
+            "NOTE: Index freshness uses quick check (age + content sampling). "
+            "Structural validation (files added/removed) is approximate — "
+            "run 'rlm-bsl-index index info' for full check."
         )
 
         for w in (idx_warnings or []):

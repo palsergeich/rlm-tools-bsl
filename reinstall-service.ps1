@@ -107,6 +107,19 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# Also update the global Python that the Windows service uses.
+# shutil.which() in _service_win.py finds this exe, not the uv tool one.
+$globalPython = & $exePath -c "import sys; print(sys.executable)" 2>$null
+if ($globalPython -and (Test-Path $globalPython)) {
+    Write-Host "Updating global Python package ($globalPython)..." -ForegroundColor Cyan
+    $uvPipArgs = @("pip", "install", $PSScriptRoot, "--python", $globalPython)
+    if ($NativeTls) { $uvPipArgs += "--native-tls" }
+    & uv @uvPipArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Global Python update failed - service may run an older version."
+    }
+}
+
 # Ensure rlm-tools-bsl is in PATH for this session
 if (-not (Get-Command rlm-tools-bsl -ErrorAction SilentlyContinue)) {
     $uvBinDir = (& uv tool dir --bin 2>$null)

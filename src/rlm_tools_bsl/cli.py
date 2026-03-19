@@ -131,7 +131,7 @@ def _cmd_info(args: argparse.Namespace) -> None:
     from rlm_tools_bsl.bsl_index import (
         IndexReader,
         IndexStatus,
-        check_index_freshness,
+        check_index_strict,
         get_index_db_path,
     )
     from rlm_tools_bsl.cache import _paths_hash
@@ -155,7 +155,7 @@ def _cmd_info(args: argparse.Namespace) -> None:
     rel_paths = [f.relative_to(base).as_posix() for f in bsl_files]
     paths_hash = _paths_hash(rel_paths)
 
-    status = check_index_freshness(db_path, len(bsl_files), paths_hash, base_path)
+    status = check_index_strict(db_path, len(bsl_files), paths_hash, base_path)
 
     status_labels = {
         IndexStatus.FRESH: "fresh",

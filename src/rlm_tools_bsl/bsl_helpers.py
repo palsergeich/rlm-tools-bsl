@@ -79,6 +79,28 @@ def make_bsl_helpers(
         with _index_lock:
             if _index_built[0]:
                 return
+
+            # Fast path: load from SQLite index (instant, <1s)
+            if idx_reader is not None:
+                try:
+                    rows = idx_reader.get_all_modules()
+                    for r in rows:
+                        info = BslFileInfo(
+                            relative_path=r["rel_path"],
+                            category=r["category"],
+                            object_name=r["object_name"],
+                            module_type=r["module_type"],
+                            form_name=r["form_name"],
+                            command_name=None,
+                            is_form_module=bool(r["form_name"]),
+                        )
+                        _index_state.append((r["rel_path"], info))
+                    _index_built[0] = True
+                    return
+                except Exception:
+                    pass  # fallback to glob
+
+            # Fallback: glob + disk cache
             all_bsl = glob_files_fn("**/*.bsl")
             bsl_count = len(all_bsl)
 
@@ -128,9 +150,17 @@ def make_bsl_helpers(
                     if len(key) >= 2:
                         prefix_counts[key] = prefix_counts.get(key, 0) + 1
 
-            # Keep prefixes that appear 3+ times (not random one-off names)
+            # For extensions, lower threshold to 1 (fewer custom objects expected)
+            config_role = None
+            if idx_reader is not None:
+                try:
+                    config_role = idx_reader.get_statistics().get("config_role")
+                except Exception:
+                    pass
+            min_count = 1 if config_role == "extension" else 3
+
             frequent = sorted(
-                ((k, v) for k, v in prefix_counts.items() if v >= 3),
+                ((k, v) for k, v in prefix_counts.items() if v >= min_count),
                 key=lambda x: -x[1],
             )
             _detected_prefixes.clear()
@@ -306,14 +336,24 @@ def make_bsl_helpers(
         else:
             paths = [relative_path for relative_path, _ in _index_state[:max_files]]
 
-        results = []
-        for path in paths:
+        def _grep_one(path: str) -> list[dict]:
             try:
-                matches = grep_fn(pattern, path)
-                if matches:
-                    results.extend(matches)
+                return grep_fn(pattern, path) or []
             except Exception:
-                pass
+                return []
+
+        if len(paths) > 1:
+            from concurrent.futures import ThreadPoolExecutor as _TP
+            with _TP(max_workers=min(8, len(paths))) as pool:
+                all_results = list(pool.map(_grep_one, paths))
+            results = [m for batch in all_results for m in batch]
+        elif paths:
+            results = _grep_one(paths[0])
+        else:
+            results = []
+
+        # Deterministic order: sort by (file, line)
+        results.sort(key=lambda m: (m.get("file", ""), m.get("line", 0)))
         return results
 
     def read_procedure(path: str, proc_name: str) -> str | None:
@@ -566,16 +606,24 @@ def make_bsl_helpers(
         category = parts[0].lower() if parts else ""
         xml_name = _CATEGORY_XML_NAMES.get(category)
 
+        last_segment = parts[-1] if parts else ""
+
         candidates = []
         if xml_name:
             candidates.append(f"{path}/Ext/{xml_name}.xml")
+        # EDT format: Documents/Name/Name.mdo
+        if last_segment:
+            candidates.append(f"{path}/{last_segment}.mdo")
         # Generic fallbacks
         candidates.append(f"{path}.xml")
         candidates.append(f"{path}.mdo")
-        # Try glob for any XML in Ext/
+        # Try glob for any XML in Ext/ (CF) or any .mdo (EDT)
         candidates_glob = glob_files_fn(f"{path}/Ext/*.xml")
         if candidates_glob:
             candidates.extend(candidates_glob[:1])
+        candidates_mdo = glob_files_fn(f"{path}/*.mdo")
+        if candidates_mdo:
+            candidates.extend(candidates_mdo[:1])
 
         for candidate in candidates:
             try:
@@ -675,6 +723,7 @@ def make_bsl_helpers(
 
         Returns: dict with modifications list and custom_attributes."""
         object_name = _strip_meta_prefix(object_name)
+        prefix_source = "user" if custom_prefixes else "auto"
         prefixes = custom_prefixes or _ensure_prefixes()
         if not prefixes:
             return {"error": "Нетиповые префиксы не обнаружены. Укажите custom_prefixes вручную."}
@@ -723,6 +772,7 @@ def make_bsl_helpers(
                 })
 
         custom_attributes: list[dict] = []
+        parse_error: str | None = None
         category = exact[0].get("category", "")
         obj_name = exact[0].get("object_name", "")
         if category and obj_name:
@@ -738,15 +788,20 @@ def make_bsl_helpers(
                             "type": "TabularSection",
                             "synonym": ts.get("synonym", ""),
                         })
-            except Exception:
-                pass
+            except Exception as exc:
+                parse_error = f"{type(exc).__name__}: {exc}"
 
-        return {
+        result = {
             "object_name": object_name,
+            "prefixes_used": prefixes,
+            "prefix_source": prefix_source,
             "modules_analyzed": len(exact),
             "modifications": modifications,
             "custom_attributes": custom_attributes,
         }
+        if parse_error:
+            result["parse_error"] = parse_error
+        return result
 
     def analyze_object(name: str) -> dict:
         """Full object profile in one call: XML metadata + all modules + procedures + exports.
@@ -975,6 +1030,23 @@ def make_bsl_helpers(
 
         Returns: dict with document, code_registers, modules_scanned."""
         document_name = _strip_meta_prefix(document_name)
+
+        # Fast path: SQLite index
+        if idx_reader is not None:
+            idx_movements = idx_reader.get_register_movements(document_name)
+            if idx_movements is not None:
+                return {
+                    "document": document_name,
+                    "code_registers": [
+                        {"name": m["register_name"], "source": m["source"], "file": m["file"]}
+                        for m in idx_movements
+                    ],
+                    "modules_scanned": [],
+                    "erp_mechanisms": [m["register_name"] for m in idx_movements if m["source"] == "erp_mechanism"],
+                    "manager_tables": [m["register_name"] for m in idx_movements if m["source"] == "manager_table"],
+                    "adapted_registers": [],
+                }
+
         modules = find_by_type("Documents", document_name)
         obj_modules = [m for m in modules if m.get("module_type") == "ObjectModule"]
 
@@ -1067,6 +1139,21 @@ def make_bsl_helpers(
 
         Returns: dict with register, writers, total_documents_scanned, total_writers."""
         register_name = _strip_meta_prefix(register_name)
+
+        # Fast path: SQLite index
+        if idx_reader is not None:
+            idx_writers = idx_reader.get_register_writers(register_name)
+            if idx_writers is not None:
+                return {
+                    "register": register_name,
+                    "writers": [
+                        {"document": w["document_name"], "source": w["source"], "file": w["file"]}
+                        for w in idx_writers
+                    ],
+                    "total_documents_scanned": 0,
+                    "total_writers": len(idx_writers),
+                }
+
         _ensure_index()
         # Collect all document ObjectModule files
         doc_modules = [
@@ -1329,6 +1416,14 @@ def make_bsl_helpers(
 
         Returns: dict with object, roles list."""
         object_name = _strip_meta_prefix(object_name)
+
+        # Fast path: SQLite index
+        if idx_reader is not None:
+            idx_roles = idx_reader.get_roles(object_name)
+            if idx_roles is not None:
+                return {"object": object_name, "roles": idx_roles}
+
+        # Fallback: glob + XML parse
         patterns = [
             "**/Roles/*/Ext/Rights.xml",
             "**/Roles/*/*.rights",
@@ -1507,15 +1602,25 @@ def make_bsl_helpers(
         content = read_file_fn(path)
         lines = content.splitlines()
 
+        # Single-pass: empty, comment, nesting depth
         total = len(lines)
         empty = 0
         comment = 0
+        max_nesting = 0
+        current_nesting = 0
         for line in lines:
             stripped = line.strip()
             if not stripped:
                 empty += 1
             elif _COMMENT_RE.match(line):
                 comment += 1
+            else:
+                for _ in _NESTING_OPEN_RE.finditer(line):
+                    current_nesting += 1
+                    if current_nesting > max_nesting:
+                        max_nesting = current_nesting
+                for _ in _NESTING_CLOSE_RE.finditer(line):
+                    current_nesting = max(0, current_nesting - 1)
         code = total - empty - comment
 
         procs = extract_procedures(path)
@@ -1526,16 +1631,6 @@ def make_bsl_helpers(
             for p in procs
         ]
         avg_size = round(sum(sizes) / len(sizes), 1) if sizes else 0
-
-        # Max nesting depth
-        max_nesting = 0
-        current_nesting = 0
-        for line in lines:
-            for _ in _NESTING_OPEN_RE.finditer(line):
-                current_nesting += 1
-                max_nesting = max(max_nesting, current_nesting)
-            for _ in _NESTING_CLOSE_RE.finditer(line):
-                current_nesting = max(0, current_nesting - 1)
 
         return {
             "total_lines": total,

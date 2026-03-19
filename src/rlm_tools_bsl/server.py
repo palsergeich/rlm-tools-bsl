@@ -11,6 +11,7 @@ from typing import Annotated, Literal
 import anyio
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 
 from rlm_tools_bsl.session import SessionManager
@@ -27,10 +28,9 @@ from rlm_tools_bsl.bsl_knowledge import (
 from rlm_tools_bsl.bsl_index import (
     IndexReader,
     IndexStatus,
-    check_index_freshness,
+    check_index_usable,
     get_index_db_path,
 )
-from rlm_tools_bsl.cache import _paths_hash
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -284,14 +284,7 @@ def _rlm_start(
         try:
             db_path = get_index_db_path(resolved)
             if db_path.exists():
-                bsl_files = [
-                    str(p.relative_to(resolved).as_posix())
-                    for p in pathlib.Path(resolved).rglob("*.bsl")
-                ]
-                bsl_count = len(bsl_files)
-                paths_hash = _paths_hash(bsl_files) if bsl_files else ""  # sorts internally
-
-                status = check_index_freshness(db_path, bsl_count, paths_hash, resolved)
+                status = check_index_usable(db_path, resolved)
                 logger.info(
                     "rlm_start: session=%s index status=%s db=%s",
                     session_id, status.value, db_path,
@@ -310,10 +303,18 @@ def _rlm_start(
                         idx_warnings.append(
                             "Index content may be outdated — run 'rlm-bsl-index index update' to refresh"
                         )
-                elif status == IndexStatus.STALE:
-                    idx_warnings.append(
-                        "Index structure mismatch (files added/removed) — run 'rlm-bsl-index index build' to rebuild"
-                    )
+
+                    # Cheap structural fingerprint: compare bsl_file_count from
+                    # detect_format() with bsl_count stored in index_meta.
+                    stored_bsl_count = idx_stats.get("bsl_count")
+                    if stored_bsl_count is not None and format_info.bsl_file_count:
+                        drift = abs(format_info.bsl_file_count - stored_bsl_count) / max(stored_bsl_count, 1)
+                        if drift > 0.05:
+                            idx_warnings.append(
+                                f"File count drift: index has {stored_bsl_count} BSL files, "
+                                f"disk has {format_info.bsl_file_count} — "
+                                "run 'rlm-bsl-index index build' if significant changes were made"
+                            )
         except Exception as e:
             logger.warning("rlm_start: session=%s index load failed: %s", session_id, e)
 
@@ -327,14 +328,20 @@ def _rlm_start(
         has_llm_tools = _install_session_llm_tools(session, sandbox)
         logger.info("rlm_start: session=%s sandbox ready, llm_tools=%s index=%s", session_id, has_llm_tools, idx_reader is not None)
 
-        # Auto-detect custom prefixes from object names
+        # Auto-detect custom prefixes — fast path from index, fallback to glob scan
         detected_prefixes: list[str] = []
-        _prefix_fn = sandbox._namespace.get("_detected_prefixes")
-        if callable(_prefix_fn):
+        if idx_reader is not None:
             try:
-                detected_prefixes = _prefix_fn()
+                detected_prefixes = idx_reader.get_detected_prefixes()
             except Exception:
                 pass
+        if not detected_prefixes:
+            _prefix_fn = sandbox._namespace.get("_detected_prefixes")
+            if callable(_prefix_fn):
+                try:
+                    detected_prefixes = _prefix_fn()
+                except Exception:
+                    pass
 
         bsl_registry = sandbox._namespace.get("_registry") or {}
         strategy = get_strategy(
@@ -398,6 +405,7 @@ def _rlm_start(
         "detected_custom_prefixes": detected_prefixes,
         "index": {
             "loaded": idx_reader is not None,
+            "index_check": "quick",
             "methods": idx_stats.get("methods") if idx_stats else None,
             "calls": idx_stats.get("calls") if idx_stats else None,
             "has_fts": idx_stats.get("has_fts", False) if idx_stats else False,
@@ -641,5 +649,12 @@ def main():
         _setup_file_logging()
         mcp.settings.host = args.host
         mcp.settings.port = args.port
+
+        # Disable DNS rebinding protection for external interfaces —
+        # when binding to 0.0.0.0 the Host header can be any IP.
+        if args.host not in ("127.0.0.1", "localhost", "::1"):
+            mcp.settings.transport_security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=False,
+            )
 
     mcp.run(transport=args.transport)
