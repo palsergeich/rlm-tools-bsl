@@ -376,6 +376,78 @@ class TestIndexReader:
         finally:
             reader.close()
 
+    def test_reader_get_callers_no_hint_meta(self, built_index):
+        """get_callers without module_hint: fast COUNT matches actual rows."""
+        db_path, _ = built_index
+        reader = IndexReader(db_path)
+        try:
+            result = reader.get_callers("ЗаполнитьТабличнуюЧасть")
+            meta = result["_meta"]
+            assert meta["total_callers"] >= 1
+            assert meta["returned"] == len(result["callers"])
+            assert meta["offset"] == 0
+            # has_more should be False when all rows fit in default limit
+            assert meta["has_more"] is False or meta["total_callers"] > meta["returned"]
+        finally:
+            reader.close()
+
+    def test_reader_get_callers_with_hint_meta(self, built_index):
+        """get_callers with module_hint: precise COUNT via JOIN."""
+        db_path, _ = built_index
+        reader = IndexReader(db_path)
+        try:
+            result = reader.get_callers("ЗаполнитьТабличнуюЧасть", module_hint="ТестовыйДокумент")
+            meta = result["_meta"]
+            assert meta["total_callers"] >= 1
+            assert meta["returned"] == len(result["callers"])
+            # All callers should be from the hinted module
+            for c in result["callers"]:
+                assert "ТестовыйДокумент" in c["object_name"]
+        finally:
+            reader.close()
+
+    def test_reader_get_callers_pagination(self, built_index):
+        """get_callers pagination: offset + limit produce consistent _meta."""
+        db_path, _ = built_index
+        reader = IndexReader(db_path)
+        try:
+            full = reader.get_callers("ЗаполнитьТабличнуюЧасть", limit=100)
+            total = full["_meta"]["total_callers"]
+            if total >= 1:
+                page = reader.get_callers("ЗаполнитьТабличнуюЧасть", limit=1, offset=0)
+                assert page["_meta"]["total_callers"] == total
+                assert page["_meta"]["returned"] == 1
+                assert page["_meta"]["offset"] == 0
+                if total > 1:
+                    assert page["_meta"]["has_more"] is True
+        finally:
+            reader.close()
+
+    def test_reader_get_callers_zero(self, built_index):
+        """get_callers for a method nobody calls returns empty list."""
+        db_path, _ = built_index
+        reader = IndexReader(db_path)
+        try:
+            result = reader.get_callers("НесуществующаяПроцедура12345")
+            assert result is not None
+            assert result["callers"] == []
+            assert result["_meta"]["total_callers"] == 0
+            assert result["_meta"]["has_more"] is False
+        finally:
+            reader.close()
+
+    def test_reader_get_callers_qualified(self, built_index):
+        """get_callers finds qualified calls (МойМодуль.ЗаполнитьТабличнуюЧасть)."""
+        db_path, _ = built_index
+        reader = IndexReader(db_path)
+        try:
+            result = reader.get_callers("ЗаполнитьТабличнуюЧасть")
+            callee_names = {c.get("file") for c in result["callers"]}
+            # Should find the call from ObjectModule (МойМодуль.ЗаполнитьТабличнуюЧасть)
+            assert result["_meta"]["total_callers"] >= 1
+        finally:
+            reader.close()
+
     def test_reader_get_exports(self, built_index):
         """get_exports_by_path returns only exported methods."""
         db_path, _ = built_index

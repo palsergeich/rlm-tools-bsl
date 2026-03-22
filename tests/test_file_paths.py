@@ -104,6 +104,24 @@ class TestCanIndexGlob:
         """**/Dir/*/*.ext (single star) should NOT match under_prefix_ext."""
         assert _can_index_glob("**/Dir/*/*.ext") is None
 
+    # --- prefix_recursive_ext pattern tests ---
+
+    def test_prefix_recursive_ext_mdo(self):
+        result = _can_index_glob("Subsystems/**/*.mdo")
+        assert result == ("prefix_recursive_ext", {"prefix": "Subsystems", "ext": ".mdo"})
+
+    def test_prefix_recursive_ext_deep(self):
+        result = _can_index_glob("Documents/Foo/Forms/**/*.bsl")
+        assert result == ("prefix_recursive_ext", {"prefix": "Documents/Foo/Forms", "ext": ".bsl"})
+
+    def test_prefix_recursive_ext_backslash(self):
+        result = _can_index_glob("Subsystems\\**\\*.mdo")
+        assert result == ("prefix_recursive_ext", {"prefix": "Subsystems", "ext": ".mdo"})
+
+    def test_prefix_recursive_ext_no_ext(self):
+        """Subsystems/**/* — no extension, should NOT match prefix_recursive_ext."""
+        assert _can_index_glob("Subsystems/**/*") == ("under_prefix", {"prefix": "Subsystems"})
+
 
 # ---------------------------------------------------------------------------
 # _collect_file_paths tests
@@ -193,6 +211,14 @@ def _make_test_fixture(tmp_path):
     enum_dir = tmp_path / "Enums" / "ВидыОпераций"
     enum_dir.mkdir(parents=True)
     (enum_dir / "ВидыОпераций.mdo").write_text("<xml/>", encoding="utf-8")
+
+    # Subsystems with nested MDO
+    sub = tmp_path / "Subsystems" / "Бухгалтерия"
+    sub.mkdir(parents=True)
+    (sub / "Бухгалтерия.mdo").write_text("<xml/>", encoding="utf-8")
+    sub2 = tmp_path / "Subsystems" / "Бухгалтерия" / "Subsystems" / "Расчёты"
+    sub2.mkdir(parents=True)
+    (sub2 / "Расчёты.mdo").write_text("<xml/>", encoding="utf-8")
 
     # XML files
     (tmp_path / "Configuration" ).mkdir(exist_ok=True)
@@ -297,6 +323,13 @@ class TestReaderGlobFiles:
         assert result is not None
         assert len(result) >= 1
         assert all("Configuration.mdo" in p for p in result)
+
+    def test_glob_prefix_recursive_ext(self, reader):
+        result = reader.glob_files("Subsystems/**/*.mdo")
+        assert result is not None
+        assert len(result) >= 2
+        assert all(p.startswith("Subsystems/") for p in result)
+        assert all(p.endswith(".mdo") for p in result)
 
     def test_results_sorted(self, reader):
         result = reader.glob_files("**/*.bsl")
@@ -451,6 +484,13 @@ class TestHelpersIntegration:
     def test_glob_under_prefix_ext_contract(self, indexed_env):
         """under_prefix_ext pattern: indexed result == FS result."""
         pattern = "**/Ext/**/*.bsl"
+        indexed_result = indexed_env["indexed"]["glob_files"](pattern)
+        fs_result = indexed_env["fs"]["glob_files"](pattern)
+        assert sorted(indexed_result) == sorted(fs_result)
+
+    def test_glob_prefix_recursive_ext_contract(self, indexed_env):
+        """prefix_recursive_ext pattern: indexed result == FS result."""
+        pattern = "Subsystems/**/*.mdo"
         indexed_result = indexed_env["indexed"]["glob_files"](pattern)
         fs_result = indexed_env["fs"]["glob_files"](pattern)
         assert sorted(indexed_result) == sorted(fs_result)

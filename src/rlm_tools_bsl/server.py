@@ -727,6 +727,20 @@ def _setup_file_logging():
     logger.info("File logging enabled: %s", log_path)
 
 
+def _warmup_imports():
+    """Pre-import heavy modules so first rlm_start is fast. Best-effort."""
+    _t0 = time.monotonic()
+    try:
+        import rlm_tools_bsl.bsl_helpers       # noqa: F401
+        import rlm_tools_bsl.bsl_xml_parsers   # noqa: F401
+        import rlm_tools_bsl.bsl_index         # noqa: F401
+        import rlm_tools_bsl.helpers           # noqa: F401
+        warmup_openai_import()
+    except Exception:
+        logger.debug("warmup: import error (non-critical)", exc_info=True)
+    logger.info("warmup: completed in %.1fs", time.monotonic() - _t0)
+
+
 def main():
     from rlm_tools_bsl._config import load_project_env
     load_project_env()
@@ -786,4 +800,5 @@ def main():
                 enable_dns_rebinding_protection=False,
             )
 
+    threading.Thread(target=_warmup_imports, daemon=True).start()
     mcp.run(transport=args.transport)

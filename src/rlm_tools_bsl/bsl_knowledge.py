@@ -203,7 +203,7 @@ def get_strategy(effort: str, format_info, detected_prefixes: list[str] | None =
             tips.extend([
                 f"  - File navigation indexed: {file_paths_count} paths (.bsl/.mdo/.xml) — "
                 "glob_files(), tree(), find_files() are instant for supported patterns.",
-                "  - FAST: glob_files('**/*.mdo'), glob_files('Documents/**'), tree('Documents'), find_files('name')",
+                "  - FAST: glob_files('**/*.mdo'), glob_files('Subsystems/**/*.mdo'), glob_files('Documents/**'), tree('Documents'), find_files('name')",
                 "  - SLOW (FS fallback): complex globs with multiple wildcards, glob_files('**/Dir*/*.xml')",
                 "  - For BSL modules: ALWAYS prefer find_module()/find_by_type() over glob_files() — faster and more precise.",
                 "  - NEVER use tree('.') on root of large configs — too much data. Use tree('SubDir') instead.",

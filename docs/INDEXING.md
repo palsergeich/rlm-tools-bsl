@@ -363,6 +363,8 @@ $ rlm-bsl-index index drop D:\ERP\src
 | Паттерн | SQL-стратегия |
 |---------|---------------|
 | `**/*.ext` | `WHERE extension = '.ext'` |
+| `**/Dir/**/*.ext` | `WHERE dir_path LIKE '%/Dir/%' AND extension = '.ext'` |
+| `Dir/**/*.ext` | `WHERE rel_path LIKE 'Dir/%' AND extension = '.ext'` |
 | `Dir/*/File.ext` | `WHERE dir_path LIKE 'Dir/%' AND filename = 'File.ext'` |
 | `Dir/**` или `Dir/**/*` | `WHERE rel_path LIKE 'Dir/%'` |
 | Точный путь | `WHERE rel_path = 'path'` |

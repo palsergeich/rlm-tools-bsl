@@ -1749,6 +1749,7 @@ def _can_index_glob(pattern: str) -> tuple[str, dict] | None:
     Supported patterns:
       **/*.ext            → ('by_extension', {ext: '.ext'})
       **/Dir/**/*.ext     → ('under_prefix_ext', {dir_name: 'Dir', ext: '.ext'})
+      Dir/**/*.ext        → ('prefix_recursive_ext', {prefix: 'Dir', ext: '.ext'})
       Dir/*/File.ext      → ('dir_file', {dir: 'Dir', file: 'File.ext'})
       Dir/** or Dir/**/*  → ('under_prefix', {prefix: 'Dir'})
       exact/path          → ('exact', {path: 'exact/path'})
@@ -1781,6 +1782,11 @@ def _can_index_glob(pattern: str) -> tuple[str, dict] | None:
             name_prefix = rest[:-2]
             return ("name_wildcard", {"name_prefix": name_prefix, "ext": ""})
         return None
+
+    # Dir/**/*.ext — recursive under prefix (anchored), filter by extension
+    m = re.match(r"^([^*?]+)/\*\*/\*(\.[^/*?]+)$", pattern)
+    if m:
+        return ("prefix_recursive_ext", {"prefix": m.group(1), "ext": m.group(2)})
 
     # **/Dir/**/*.ext — recursive under directory name, filter by extension
     m = re.match(r"^\*\*/([^/*?]+)/\*\*/\*(\.[^/*?]+)$", pattern)
@@ -1943,9 +1949,20 @@ class IndexReader:
                 params_list.append(f"%{module_hint}%")
 
             # Count total
-            count_query = f"SELECT COUNT(*) AS cnt FROM ({query})"
             _t0 = time.monotonic()
-            count_row = self._conn.execute(count_query, params_list).fetchone()
+            if not module_hint:
+                # Fast path: COUNT on calls table only (uses idx_calls_callee)
+                count_query = (
+                    "SELECT COUNT(*) AS cnt FROM calls "
+                    "WHERE (callee_name = ? COLLATE NOCASE "
+                    "       OR callee_name LIKE ? ESCAPE '\\')"
+                )
+                count_params = [proc_name, f"%.{escaped_name}"]
+                count_row = self._conn.execute(count_query, count_params).fetchone()
+            else:
+                # Exact path: COUNT via JOIN (precise, with module filter)
+                count_query = f"SELECT COUNT(*) AS cnt FROM ({query})"
+                count_row = self._conn.execute(count_query, params_list).fetchone()
             _t_count = time.monotonic() - _t0
             total_callers = count_row["cnt"] if count_row else 0
 
@@ -2269,6 +2286,15 @@ class IndexReader:
                     rows = self._conn.execute(
                         "SELECT rel_path FROM file_paths WHERE rel_path = ?",
                         (params["path"],),
+                    ).fetchall()
+                elif kind == "prefix_recursive_ext":
+                    prefix = params["prefix"]
+                    ext = params["ext"]
+                    rows = self._conn.execute(
+                        "SELECT rel_path FROM file_paths "
+                        "WHERE rel_path LIKE ? AND extension = ? "
+                        "ORDER BY rel_path",
+                        (prefix + "/%", ext),
                     ).fetchall()
                 elif kind == "under_prefix_ext":
                     dir_name = params["dir_name"]

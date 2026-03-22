@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.3.4] — 2026-03-22
+
+### Добавлено
+- **Indexed glob `Dir/**/*.ext`** — новая стратегия `prefix_recursive_ext` в `_can_index_glob()`. Паттерн `Subsystems/**/*.mdo` теперь мгновенный из SQLite вместо FS fallback (2.8s на медленном ПК)
+- **Warmup тяжёлых модулей при старте сервиса** — `_warmup_imports()` в фоновом потоке: `bsl_helpers`, `bsl_xml_parsers`, `bsl_index`, `helpers`, `openai`. Запускается перед `mcp.run()`, снижает cold start первого `rlm_start`
+
+### Изменено
+- **Оптимизация `get_callers()` COUNT** — при отсутствии `module_hint` COUNT выполняется по одной таблице `calls` (использует `idx_calls_callee`) вместо дорогого COUNT через JOIN. При наличии `module_hint` — точный COUNT через JOIN (без изменений)
+
+### Тесты
+- 6 новых тестов `prefix_recursive_ext` (распознавание + SQL + parity)
+- 5 новых тестов `get_callers` (meta без hint, meta с hint, pagination, zero callers, qualified calls)
+
 ## [1.3.3] — 2026-03-20
 
 ### Добавлено
