@@ -26,10 +26,24 @@ class EffortConfig:
 
 
 EFFORT_LEVELS = {
-    "low":    EffortConfig(10,  5,   5,  "Quick lookup. Find target module, extract what's needed, stop. Target: 3-5 rlm_execute calls."),
-    "medium": EffortConfig(25,  15,  10, "Standard analysis. Find modules, trace 1-2 levels of calls, summarize. Target: 10-15 calls."),
-    "high":   EffortConfig(50,  30,  20, "Deep analysis (RECOMMENDED for multi-aspect tasks). Multi-module trace (3-4 levels), data flow, complete picture. Target: 20-30 calls. Build mermaid diagram."),
-    "max":    EffortConfig(100, 50,  50, "Exhaustive mapping. All modules, all call chains, all data flows. Use llm_query() for semantic analysis. Target: 40-50+ calls."),
+    "low": EffortConfig(
+        10, 5, 5, "Quick lookup. Find target module, extract what's needed, stop. Target: 3-5 rlm_execute calls."
+    ),
+    "medium": EffortConfig(
+        25, 15, 10, "Standard analysis. Find modules, trace 1-2 levels of calls, summarize. Target: 10-15 calls."
+    ),
+    "high": EffortConfig(
+        50,
+        30,
+        20,
+        "Deep analysis (RECOMMENDED for multi-aspect tasks). Multi-module trace (3-4 levels), data flow, complete picture. Target: 20-30 calls. Build mermaid diagram.",
+    ),
+    "max": EffortConfig(
+        100,
+        50,
+        50,
+        "Exhaustive mapping. All modules, all call chains, all data flows. Use llm_query() for semantic analysis. Target: 40-50+ calls.",
+    ),
 }
 
 _STRATEGY_HEADER = """\
@@ -239,11 +253,7 @@ def build_helpers_table(registry: dict) -> str:
     """Build the HELPERS section of strategy text from registry."""
     lines = ["== HELPERS (call help('keyword') for usage examples and return formats) =="]
     for cat_key, cat_label in _CATEGORY_ORDER:
-        entries = [
-            (name, entry["sig"])
-            for name, entry in registry.items()
-            if entry["cat"] == cat_key
-        ]
+        entries = [(name, entry["sig"]) for name, entry in registry.items() if entry["cat"] == cat_key]
         if not entries:
             continue
         lines.append(f"{cat_label}:")
@@ -265,19 +275,23 @@ def _match_recipe(query: str) -> str | None:
     return None
 
 
-def get_strategy(effort: str, format_info, detected_prefixes: list[str] | None = None,
-                 extension_context=None, ext_overrides: dict | None = None,
-                 registry: dict | None = None,
-                 idx_stats: dict | None = None,
-                 idx_warnings: list[str] | None = None,
-                 query: str = "") -> str:
+def get_strategy(
+    effort: str,
+    format_info,
+    detected_prefixes: list[str] | None = None,
+    extension_context=None,
+    ext_overrides: dict | None = None,
+    registry: dict | None = None,
+    idx_stats: dict | None = None,
+    idx_warnings: list[str] | None = None,
+    query: str = "",
+) -> str:
     config = EFFORT_LEVELS.get(effort, EFFORT_LEVELS["medium"])
 
     has_extensions = (
         extension_context is not None
         and extension_context.current.role.value != "unknown"
-        and (extension_context.current.role.value == "extension"
-             or extension_context.nearby_extensions)
+        and (extension_context.current.role.value == "extension" or extension_context.nearby_extensions)
     )
 
     parts: list[str] = []
@@ -336,9 +350,13 @@ def get_strategy(effort: str, format_info, detected_prefixes: list[str] | None =
         instant_helpers = ["extract_procedures()", "find_exports()"]
         if calls_count:
             instant_helpers.append("find_callers_context()")
-        instant_helpers.extend([
-            "find_event_subscriptions()", "find_scheduled_jobs()", "find_functional_options()",
-        ])
+        instant_helpers.extend(
+            [
+                "find_event_subscriptions()",
+                "find_scheduled_jobs()",
+                "find_functional_options()",
+            ]
+        )
         role_rights_count = idx_stats.get("role_rights", 0)
         if role_rights_count:
             instant_helpers.append("find_roles()")
@@ -376,14 +394,16 @@ def get_strategy(effort: str, format_info, detected_prefixes: list[str] | None =
             "  - extract_procedures + find_exports + find_callers_context in ONE call is fine.",
         ]
         if file_paths_count:
-            tips.extend([
-                f"  - File navigation indexed: {file_paths_count} paths (.bsl/.mdo/.xml) — "
-                "glob_files(), tree(), find_files() are instant for supported patterns.",
-                "  - FAST: glob_files('**/*.mdo'), glob_files('Subsystems/**/*.mdo'), glob_files('Documents/**'), tree('Documents'), find_files('name')",
-                "  - SLOW (FS fallback): complex globs with multiple wildcards, glob_files('**/Dir*/*.xml')",
-                "  - For BSL modules: ALWAYS prefer find_module()/find_by_type() over glob_files() — faster and more precise.",
-                "  - NEVER use tree('.') on root of large configs — too much data. Use tree('SubDir') instead.",
-            ])
+            tips.extend(
+                [
+                    f"  - File navigation indexed: {file_paths_count} paths (.bsl/.mdo/.xml) — "
+                    "glob_files(), tree(), find_files() are instant for supported patterns.",
+                    "  - FAST: glob_files('**/*.mdo'), glob_files('Subsystems/**/*.mdo'), glob_files('Documents/**'), tree('Documents'), find_files('name')",
+                    "  - SLOW (FS fallback): complex globs with multiple wildcards, glob_files('**/Dir*/*.xml')",
+                    "  - For BSL modules: ALWAYS prefer find_module()/find_by_type() over glob_files() — faster and more precise.",
+                    "  - NEVER use tree('.') on root of large configs — too much data. Use tree('SubDir') instead.",
+                ]
+            )
         idx_lines.append("\n".join(tips))
 
         idx_lines.append(
@@ -392,7 +412,7 @@ def get_strategy(effort: str, format_info, detected_prefixes: list[str] | None =
             "run 'rlm-bsl-index index info' for full check."
         )
 
-        for w in (idx_warnings or []):
+        for w in idx_warnings or []:
             idx_lines.append(f"WARNING: {w}")
         parts.append("\n".join(idx_lines))
 
@@ -410,14 +430,10 @@ def get_strategy(effort: str, format_info, detected_prefixes: list[str] | None =
         fmt = getattr(format_info, "format_label", None)
         if fmt == "cf":
             parts.append(
-                "\n== FORMAT: CF ==\n"
-                "Paths: CommonModules/Name/Ext/Module.bsl, Documents/Name/Ext/ObjectModule.bsl"
+                "\n== FORMAT: CF ==\nPaths: CommonModules/Name/Ext/Module.bsl, Documents/Name/Ext/ObjectModule.bsl"
             )
         elif fmt == "edt":
-            parts.append(
-                "\n== FORMAT: EDT ==\n"
-                "Paths: CommonModules/Name/Module.bsl, Documents/Name/ObjectModule.bsl"
-            )
+            parts.append("\n== FORMAT: EDT ==\nPaths: CommonModules/Name/Module.bsl, Documents/Name/ObjectModule.bsl")
 
     # --- Custom prefixes ---
     if detected_prefixes:
@@ -439,8 +455,7 @@ def _extension_strategy(ext_context, ext_overrides: dict) -> str:
 
     if current.role == ConfigRole.MAIN and ext_context.nearby_extensions:
         ext_names = ", ".join(
-            f"{e.name or '?'} (prefix: {e.name_prefix or '—'})"
-            for e in ext_context.nearby_extensions
+            f"{e.name or '?'} (prefix: {e.name_prefix or '—'})" for e in ext_context.nearby_extensions
         )
         lines.append(
             f"\nCRITICAL — EXTENSIONS DETECTED: {ext_names}\n"
@@ -470,8 +485,7 @@ def _extension_strategy(ext_context, ext_overrides: dict) -> str:
         )
         if ext_context.nearby_main:
             lines.append(
-                f"  Main config found nearby: {ext_context.nearby_main.name or '?'} "
-                f"at {ext_context.nearby_main.path}"
+                f"  Main config found nearby: {ext_context.nearby_main.name or '?'} at {ext_context.nearby_main.path}"
             )
         # Include auto-scanned own overrides
         overrides = ext_overrides.get("self", [])
@@ -485,18 +499,19 @@ def _extension_strategy(ext_context, ext_overrides: dict) -> str:
 def _format_overrides_summary(overrides: list[dict], max_lines: int = 30) -> list[str]:
     """Format overrides as compact grouped-by-object lines."""
     from collections import defaultdict
+
     by_object: dict[str, list[str]] = defaultdict(list)
     for o in overrides:
         obj = o.get("object_name") or "?"
         ann = o.get("annotation", "?")
         target = o.get("target_method", "?")
-        by_object[obj].append(f"&{ann}(\"{target}\")")
+        by_object[obj].append(f'&{ann}("{target}")')
 
     lines: list[str] = []
-    for obj, annotations in sorted(by_object.items()):
-        lines.append(f"  {obj}: {', '.join(annotations)}")
+    for obj, obj_annotations in sorted(by_object.items()):
+        lines.append(f"  {obj}: {', '.join(obj_annotations)}")
         if len(lines) >= max_lines:
-            lines.append(f"  ... and more (see extension_context.own_overrides or nearby_extensions[].overrides)")
+            lines.append("  ... and more (see extension_context.own_overrides or nearby_extensions[].overrides)")
             break
     return lines
 

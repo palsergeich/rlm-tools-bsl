@@ -12,24 +12,54 @@ _GREP_CACHE_MAX_SIZE = 100
 
 
 _SKIP_DIRS = {
-    ".git", ".build", "node_modules", ".venv", "venv",
-    "__pycache__", ".tox", ".mypy_cache", ".cache", ".rlm_cache",
+    ".git",
+    ".build",
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".tox",
+    ".mypy_cache",
+    ".cache",
+    ".rlm_cache",
 }
 
 _BINARY_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".tar", ".gz",
-    ".xz", ".bz2", ".o", ".a", ".dylib", ".framework", ".xcassets",
-    ".car", ".nib", ".storyboardc", ".momd", ".sqlite", ".db",
-    ".epf", ".erf", ".bin", ".mxlx", ".cmi", ".dcss", ".dcssca",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".pdf",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".xz",
+    ".bz2",
+    ".o",
+    ".a",
+    ".dylib",
+    ".framework",
+    ".xcassets",
+    ".car",
+    ".nib",
+    ".storyboardc",
+    ".momd",
+    ".sqlite",
+    ".db",
+    ".epf",
+    ".erf",
+    ".bin",
+    ".mxlx",
+    ".cmi",
+    ".dcss",
+    ".dcssca",
 }
 
 
 def _walk_files(root: pathlib.Path):
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [
-            d for d in dirnames
-            if d not in _SKIP_DIRS and not d.startswith(".")
-        ]
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
         for fname in filenames:
             if fname.startswith("."):
                 continue
@@ -136,11 +166,13 @@ def make_helpers(base_path: str, idx_reader=None) -> tuple[dict, callable]:
             try:
                 for i, line in enumerate(file_path.read_text(encoding="utf-8-sig", errors="replace").splitlines(), 1):
                     if compiled.search(line):
-                        results.append({
-                            "file": str(file_path.relative_to(base)),
-                            "line": i,
-                            "text": line.strip(),
-                        })
+                        results.append(
+                            {
+                                "file": str(file_path.relative_to(base)),
+                                "line": i,
+                                "text": line.strip(),
+                            }
+                        )
             except (OSError, UnicodeDecodeError):
                 continue
 
@@ -212,7 +244,7 @@ def make_helpers(base_path: str, idx_reader=None) -> tuple[dict, callable]:
                             relevant.add(i)
                     excerpts = []
                     for i in sorted(relevant):
-                        excerpts.append(f"L{i+1}: {content_lines[i]}")
+                        excerpts.append(f"L{i + 1}: {content_lines[i]}")
                     file_contents[fp] = "\n".join(excerpts)
                 else:
                     file_contents[fp] = content
@@ -318,7 +350,7 @@ def make_helpers(base_path: str, idx_reader=None) -> tuple[dict, callable]:
             if prefix_strip:
                 if not p.startswith(prefix_strip + "/"):
                     continue
-                p = p[len(prefix_strip) + 1:]
+                p = p[len(prefix_strip) + 1 :]
             parts = p.split("/")
             if len(parts) > max_depth:
                 continue

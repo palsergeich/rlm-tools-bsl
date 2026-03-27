@@ -14,6 +14,7 @@ from rlm_tools_bsl.bsl_knowledge import (
 
 # --- BSL_PATTERNS ---
 
+
 def test_all_patterns_compile():
     """All regex patterns must compile without error."""
     for name, pattern in BSL_PATTERNS.items():
@@ -54,6 +55,7 @@ def test_region_patterns():
 
 # --- EFFORT_LEVELS ---
 
+
 def test_effort_levels_keys():
     assert set(EFFORT_LEVELS.keys()) == {"low", "medium", "high", "max"}
 
@@ -78,6 +80,7 @@ def test_effort_levels_ordering():
 
 # --- get_strategy ---
 
+
 def test_strategy_contains_critical_warning():
     text = get_strategy("medium", None)
     assert "CRITICAL" in text
@@ -97,8 +100,6 @@ def test_strategy_contains_helper_signatures():
 def test_strategy_contains_effort_guidance():
     for effort in ["low", "medium", "high", "max"]:
         text = get_strategy(effort, None)
-        # Should contain something from the effort config guidance
-        config = EFFORT_LEVELS[effort]
         # At minimum the strategy should mention the effort level or contain some guidance
         assert len(text) > 100
 
@@ -150,6 +151,7 @@ def test_get_strategy_format_hints():
 
 # --- Descriptions ---
 
+
 def test_rlm_start_description():
     assert "BSL" in RLM_START_DESCRIPTION
     assert "1C" in RLM_START_DESCRIPTION
@@ -163,6 +165,7 @@ def test_rlm_execute_description():
 
 
 # --- Business recipes ---
+
 
 def test_business_recipes_structure():
     """All domains must have compact and full keys."""

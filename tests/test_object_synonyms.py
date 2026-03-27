@@ -3,12 +3,12 @@
 Tests: collector, IndexReader.search_objects(), helpers, strategy,
 CLI --no-synonyms flag, incremental update migration, Cyrillic case-insensitive.
 """
+
 import sqlite3
 
 import pytest
 
 from rlm_tools_bsl.bsl_index import (
-    BUILDER_VERSION,
     IndexBuilder,
     IndexReader,
     _CATEGORY_RU,
@@ -118,23 +118,20 @@ _CF_NO_SYNONYM_XML = """\
 # Helpers: create test fixture with metadata files
 # ---------------------------------------------------------------------------
 
+
 def _make_synonym_fixture_cf(tmp_path):
     """Create CF-format project with metadata files that have synonyms."""
     # Documents/АвансовыйОтчет/Ext/ObjectModule.bsl + metadata XML
     doc_dir = tmp_path / "Documents" / "АвансовыйОтчет"
     ext_dir = doc_dir / "Ext"
     ext_dir.mkdir(parents=True)
-    (ext_dir / "ObjectModule.bsl").write_text(
-        "Процедура Тест() Экспорт\nКонецПроцедуры\n", encoding="utf-8-sig"
-    )
+    (ext_dir / "ObjectModule.bsl").write_text("Процедура Тест() Экспорт\nКонецПроцедуры\n", encoding="utf-8-sig")
     (ext_dir / "Document.xml").write_text(_CF_DOCUMENT_XML, encoding="utf-8")
 
     # CommonModules/РасчетСебестоимости/Ext/Module.bsl + metadata XML
     cm_dir = tmp_path / "CommonModules" / "РасчетСебестоимости" / "Ext"
     cm_dir.mkdir(parents=True)
-    (cm_dir / "Module.bsl").write_text(
-        "Процедура Рассчитать() Экспорт\nКонецПроцедуры\n", encoding="utf-8-sig"
-    )
+    (cm_dir / "Module.bsl").write_text("Процедура Рассчитать() Экспорт\nКонецПроцедуры\n", encoding="utf-8-sig")
     (cm_dir / "Module.xml").write_text(_CF_COMMON_MODULE_XML, encoding="utf-8")
 
     # InformationRegisters/КурсыВалют/Ext/RecordSetModule.bsl + XML
@@ -148,9 +145,7 @@ def _make_synonym_fixture_cf(tmp_path):
     # CommonModules/ПустойМодуль — without synonym (edge case)
     empty_dir = tmp_path / "CommonModules" / "ПустойМодуль" / "Ext"
     empty_dir.mkdir(parents=True)
-    (empty_dir / "Module.bsl").write_text(
-        "Процедура Пусто()\nКонецПроцедуры\n", encoding="utf-8-sig"
-    )
+    (empty_dir / "Module.bsl").write_text("Процедура Пусто()\nКонецПроцедуры\n", encoding="utf-8-sig")
     (empty_dir / "Module.xml").write_text(_CF_NO_SYNONYM_XML, encoding="utf-8")
 
     return tmp_path
@@ -165,9 +160,7 @@ def _make_synonym_fixture_edt(tmp_path):
     # Need at least one .bsl file for the builder
     ext = doc_dir / "Ext"
     ext.mkdir()
-    (ext / "ObjectModule.bsl").write_text(
-        "Процедура Тест() Экспорт\nКонецПроцедуры\n", encoding="utf-8-sig"
-    )
+    (ext / "ObjectModule.bsl").write_text("Процедура Тест() Экспорт\nКонецПроцедуры\n", encoding="utf-8-sig")
 
     # Catalogs/Контрагенты/Контрагенты.mdo
     cat_dir = tmp_path / "Catalogs" / "Контрагенты"
@@ -175,9 +168,7 @@ def _make_synonym_fixture_edt(tmp_path):
     (cat_dir / "Контрагенты.mdo").write_text(_EDT_CATALOG_MDO, encoding="utf-8")
     ext2 = cat_dir / "Ext"
     ext2.mkdir()
-    (ext2 / "ManagerModule.bsl").write_text(
-        "Функция Тест() Экспорт\nВозврат 1;\nКонецФункции\n", encoding="utf-8-sig"
-    )
+    (ext2 / "ManagerModule.bsl").write_text("Функция Тест() Экспорт\nВозврат 1;\nКонецФункции\n", encoding="utf-8-sig")
 
     return tmp_path
 
@@ -185,6 +176,7 @@ def _make_synonym_fixture_edt(tmp_path):
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def cf_project(tmp_path):
@@ -216,8 +208,8 @@ def built_edt_index(edt_project, monkeypatch):
 # _CATEGORY_RU and _SYNONYM_CATEGORIES
 # ---------------------------------------------------------------------------
 
-class TestCategoryMapping:
 
+class TestCategoryMapping:
     def test_category_ru_has_all_expected(self):
         assert "CommonModules" in _CATEGORY_RU
         assert "Documents" in _CATEGORY_RU
@@ -243,8 +235,8 @@ class TestCategoryMapping:
 # _collect_object_synonyms
 # ---------------------------------------------------------------------------
 
-class TestCollector:
 
+class TestCollector:
     def test_collector_cf_finds_synonyms(self, cf_project):
         results = _collect_object_synonyms(str(cf_project))
         names = {r[0] for r in results}
@@ -304,14 +296,12 @@ class TestCollector:
 # IndexBuilder with synonyms
 # ---------------------------------------------------------------------------
 
-class TestBuildSynonyms:
 
+class TestBuildSynonyms:
     def test_build_creates_object_synonyms_table(self, built_cf_index):
         db_path, _ = built_cf_index
         conn = sqlite3.connect(str(db_path))
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         conn.close()
         assert "object_synonyms" in tables
 
@@ -325,9 +315,7 @@ class TestBuildSynonyms:
     def test_build_has_synonyms_meta(self, built_cf_index):
         db_path, _ = built_cf_index
         conn = sqlite3.connect(str(db_path))
-        row = conn.execute(
-            "SELECT value FROM index_meta WHERE key='has_synonyms'"
-        ).fetchone()
+        row = conn.execute("SELECT value FROM index_meta WHERE key='has_synonyms'").fetchone()
         conn.close()
         assert row[0] == "1"
 
@@ -335,14 +323,14 @@ class TestBuildSynonyms:
         monkeypatch.setenv("RLM_INDEX_DIR", str(cf_project / ".idx_no_syn"))
         builder = IndexBuilder()
         db_path = builder.build(
-            str(cf_project), build_calls=False, build_fts=False,
+            str(cf_project),
+            build_calls=False,
+            build_fts=False,
             build_synonyms=False,
         )
         conn = sqlite3.connect(str(db_path))
         count = conn.execute("SELECT COUNT(*) FROM object_synonyms").fetchone()[0]
-        meta = conn.execute(
-            "SELECT value FROM index_meta WHERE key='has_synonyms'"
-        ).fetchone()
+        meta = conn.execute("SELECT value FROM index_meta WHERE key='has_synonyms'").fetchone()
         conn.close()
         assert count == 0
         assert meta[0] == "0"
@@ -350,9 +338,7 @@ class TestBuildSynonyms:
     def test_builder_version_8(self, built_cf_index):
         db_path, _ = built_cf_index
         conn = sqlite3.connect(str(db_path))
-        row = conn.execute(
-            "SELECT value FROM index_meta WHERE key='builder_version'"
-        ).fetchone()
+        row = conn.execute("SELECT value FROM index_meta WHERE key='builder_version'").fetchone()
         conn.close()
         assert row[0] == "8"
 
@@ -361,8 +347,8 @@ class TestBuildSynonyms:
 # IndexReader.search_objects
 # ---------------------------------------------------------------------------
 
-class TestSearchObjects:
 
+class TestSearchObjects:
     def test_search_by_object_name(self, built_cf_index):
         db_path, _ = built_cf_index
         reader = IndexReader(db_path)
@@ -460,8 +446,8 @@ class TestSearchObjects:
 # IndexReader.get_statistics includes object_synonyms
 # ---------------------------------------------------------------------------
 
-class TestStatistics:
 
+class TestStatistics:
     def test_statistics_has_object_synonyms(self, built_cf_index):
         db_path, _ = built_cf_index
         reader = IndexReader(db_path)
@@ -475,8 +461,8 @@ class TestStatistics:
 # Helper search_objects() and get_index_info()
 # ---------------------------------------------------------------------------
 
-class TestHelpers:
 
+class TestHelpers:
     def test_search_objects_helper(self, built_cf_index):
         from rlm_tools_bsl.bsl_helpers import make_bsl_helpers
         from rlm_tools_bsl.format_detector import detect_format
@@ -500,6 +486,7 @@ class TestHelpers:
 
     def test_search_objects_no_index(self):
         from rlm_tools_bsl.bsl_helpers import make_bsl_helpers
+
         bsl = make_bsl_helpers(
             base_path="/nonexistent",
             resolve_safe=lambda p: __import__("pathlib").Path(p),
@@ -533,6 +520,7 @@ class TestHelpers:
 
     def test_get_index_info_no_index(self):
         from rlm_tools_bsl.bsl_helpers import make_bsl_helpers
+
         bsl = make_bsl_helpers(
             base_path="/nonexistent",
             resolve_safe=lambda p: __import__("pathlib").Path(p),
@@ -570,32 +558,35 @@ class TestHelpers:
 # Strategy mentions search_objects
 # ---------------------------------------------------------------------------
 
-class TestStrategy:
 
+class TestStrategy:
     def test_strategy_mentions_search_objects(self):
         from rlm_tools_bsl.bsl_knowledge import get_strategy
         from rlm_tools_bsl.format_detector import FormatInfo, SourceFormat
+
         fi = FormatInfo(SourceFormat.CF, "/test", 10, True, ["Documents"])
         strategy = get_strategy(
-            "high", fi,
-            idx_stats={"methods": 100, "calls": 50, "object_synonyms": 500,
-                       "builder_version": "7"},
+            "high",
+            fi,
+            idx_stats={"methods": 100, "calls": 50, "object_synonyms": 500, "builder_version": "7"},
         )
         assert "search_objects" in strategy
 
     def test_strategy_shows_synonym_count(self):
         from rlm_tools_bsl.bsl_knowledge import get_strategy
         from rlm_tools_bsl.format_detector import FormatInfo, SourceFormat
+
         fi = FormatInfo(SourceFormat.CF, "/test", 10, True, ["Documents"])
         strategy = get_strategy(
-            "high", fi,
-            idx_stats={"methods": 100, "calls": 50, "object_synonyms": 1234,
-                       "builder_version": "7"},
+            "high",
+            fi,
+            idx_stats={"methods": 100, "calls": 50, "object_synonyms": 1234, "builder_version": "7"},
         )
         assert "1234 synonyms" in strategy
 
     def test_workflow_has_search_objects(self):
         from rlm_tools_bsl.bsl_knowledge import _STRATEGY_HEADER
+
         assert "search_objects" in _STRATEGY_HEADER
 
 
@@ -603,8 +594,8 @@ class TestStrategy:
 # EDT format build
 # ---------------------------------------------------------------------------
 
-class TestEdtBuild:
 
+class TestEdtBuild:
     def test_edt_build_synonyms(self, built_edt_index):
         db_path, _ = built_edt_index
         reader = IndexReader(db_path)
@@ -627,15 +618,17 @@ class TestEdtBuild:
 # Incremental update with synonyms
 # ---------------------------------------------------------------------------
 
-class TestIncrementalUpdate:
 
+class TestIncrementalUpdate:
     def test_update_creates_synonyms_on_v6_index(self, cf_project, monkeypatch):
         """Simulate v6 index (no has_synonyms key) → update should build synonyms."""
         monkeypatch.setenv("RLM_INDEX_DIR", str(cf_project / ".idx_v6"))
         builder = IndexBuilder()
         # Build without synonyms to simulate v6
         db_path = builder.build(
-            str(cf_project), build_calls=False, build_fts=False,
+            str(cf_project),
+            build_calls=False,
+            build_fts=False,
             build_synonyms=False,
         )
         # Remove has_synonyms key to simulate v6 index
@@ -657,7 +650,9 @@ class TestIncrementalUpdate:
         monkeypatch.setenv("RLM_INDEX_DIR", str(cf_project / ".idx_no_syn"))
         builder = IndexBuilder()
         db_path = builder.build(
-            str(cf_project), build_calls=False, build_fts=False,
+            str(cf_project),
+            build_calls=False,
+            build_fts=False,
             build_synonyms=False,
         )
 
@@ -673,27 +668,23 @@ class TestIncrementalUpdate:
         monkeypatch.setenv("RLM_INDEX_DIR", str(cf_project / ".idx_v6ver"))
         builder = IndexBuilder()
         db_path = builder.build(
-            str(cf_project), build_calls=False, build_fts=False,
+            str(cf_project),
+            build_calls=False,
+            build_fts=False,
             build_synonyms=False,
         )
         # Simulate v6 index: remove has_synonyms, set version=6
         conn = sqlite3.connect(str(db_path))
         conn.execute("DELETE FROM index_meta WHERE key='has_synonyms'")
-        conn.execute(
-            "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('builder_version', '6')"
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('version', '6')"
-        )
+        conn.execute("INSERT OR REPLACE INTO index_meta (key, value) VALUES ('builder_version', '6')")
+        conn.execute("INSERT OR REPLACE INTO index_meta (key, value) VALUES ('version', '6')")
         conn.commit()
         conn.close()
 
         builder.update(str(cf_project))
 
         conn = sqlite3.connect(str(db_path))
-        ver = conn.execute(
-            "SELECT value FROM index_meta WHERE key='builder_version'"
-        ).fetchone()[0]
+        ver = conn.execute("SELECT value FROM index_meta WHERE key='builder_version'").fetchone()[0]
         conn.close()
         assert ver == "8"
 
@@ -704,25 +695,22 @@ class TestIncrementalUpdate:
 
 
 class TestV7toV8Migration:
-
     def test_update_v7_index_creates_regions_and_headers(self, cf_project, monkeypatch):
         """update() on v7 index must trigger full rebuild with regions/module_headers."""
         monkeypatch.setenv("RLM_INDEX_DIR", str(cf_project / ".idx_v7to8"))
         builder = IndexBuilder()
         db_path = builder.build(
-            str(cf_project), build_calls=False, build_fts=False,
+            str(cf_project),
+            build_calls=False,
+            build_fts=False,
             build_synonyms=True,
         )
         # Simulate v7 index: set version=7, drop regions/module_headers tables
         conn = sqlite3.connect(str(db_path))
         conn.execute("DROP TABLE IF EXISTS regions")
         conn.execute("DROP TABLE IF EXISTS module_headers")
-        conn.execute(
-            "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('builder_version', '7')"
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('version', '7')"
-        )
+        conn.execute("INSERT OR REPLACE INTO index_meta (key, value) VALUES ('builder_version', '7')")
+        conn.execute("INSERT OR REPLACE INTO index_meta (key, value) VALUES ('version', '7')")
         conn.commit()
         conn.close()
 
@@ -732,9 +720,7 @@ class TestV7toV8Migration:
         assert result["added"] > 0
 
         conn = sqlite3.connect(str(db_path))
-        ver = conn.execute(
-            "SELECT value FROM index_meta WHERE key='builder_version'"
-        ).fetchone()[0]
+        ver = conn.execute("SELECT value FROM index_meta WHERE key='builder_version'").fetchone()[0]
         assert ver == "8"
         # regions and module_headers tables must exist (no OperationalError)
         regions_count = conn.execute("SELECT COUNT(*) FROM regions").fetchone()[0]
@@ -750,14 +736,14 @@ class TestV7toV8Migration:
         monkeypatch.setenv("RLM_INDEX_DIR", str(cf_project / ".idx_v7flags"))
         builder = IndexBuilder()
         db_path = builder.build(
-            str(cf_project), build_calls=False, build_fts=False,
+            str(cf_project),
+            build_calls=False,
+            build_fts=False,
             build_synonyms=False,
         )
         # Simulate v7 index
         conn = sqlite3.connect(str(db_path))
-        conn.execute(
-            "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('builder_version', '7')"
-        )
+        conn.execute("INSERT OR REPLACE INTO index_meta (key, value) VALUES ('builder_version', '7')")
         conn.commit()
         conn.close()
 
@@ -765,9 +751,7 @@ class TestV7toV8Migration:
 
         conn = sqlite3.connect(str(db_path))
         # FTS should still be disabled
-        has_fts = conn.execute(
-            "SELECT value FROM index_meta WHERE key='has_fts'"
-        ).fetchone()
+        has_fts = conn.execute("SELECT value FROM index_meta WHERE key='has_fts'").fetchone()
         assert has_fts is None or has_fts[0] != "1"
         conn.close()
 
@@ -776,8 +760,8 @@ class TestV7toV8Migration:
 # Fix: exact match must never be lost in over-fetch (Finding 1)
 # ---------------------------------------------------------------------------
 
-class TestExactMatchGuarantee:
 
+class TestExactMatchGuarantee:
     def test_exact_match_not_lost_with_many_results(self, tmp_path, monkeypatch):
         """Object named exactly "Тест" must be rank 0 among 210 "Тест*" LIKE hits.
 
@@ -792,40 +776,36 @@ class TestExactMatchGuarantee:
         for i in range(210):
             obj_dir = tmp_path / "Documents" / f"Тест{i}" / "Ext"
             obj_dir.mkdir(parents=True)
-            (obj_dir / "ObjectModule.bsl").write_text(
-                "Процедура Т() Экспорт\nКонецПроцедуры\n", encoding="utf-8-sig"
-            )
+            (obj_dir / "ObjectModule.bsl").write_text("Процедура Т() Экспорт\nКонецПроцедуры\n", encoding="utf-8-sig")
             xml = (
                 '<?xml version="1.0" encoding="UTF-8"?>\n'
                 '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" '
                 'xmlns:mdclass="http://v8.1c.ru/8.3/MDClasses" '
                 'xmlns:v8="http://v8.1c.ru/8.1/data/core">\n'
-                '<Document><Properties>'
-                f'<Name>Тест{i}</Name>'
-                '<Synonym><v8:item><v8:lang>ru</v8:lang>'
-                f'<v8:content>Тестовый документ {i}</v8:content>'
-                '</v8:item></Synonym>'
-                '</Properties></Document></MetaDataObject>'
+                "<Document><Properties>"
+                f"<Name>Тест{i}</Name>"
+                "<Synonym><v8:item><v8:lang>ru</v8:lang>"
+                f"<v8:content>Тестовый документ {i}</v8:content>"
+                "</v8:item></Synonym>"
+                "</Properties></Document></MetaDataObject>"
             )
             (obj_dir / "Document.xml").write_text(xml, encoding="utf-8")
 
         # Add one object named exactly "Тест" — the exact match target
         exact_dir = tmp_path / "CommonModules" / "Тест" / "Ext"
         exact_dir.mkdir(parents=True)
-        (exact_dir / "Module.bsl").write_text(
-            "Процедура Т() Экспорт\nКонецПроцедуры\n", encoding="utf-8-sig"
-        )
+        (exact_dir / "Module.bsl").write_text("Процедура Т() Экспорт\nКонецПроцедуры\n", encoding="utf-8-sig")
         exact_xml = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" '
             'xmlns:mdclass="http://v8.1c.ru/8.3/MDClasses" '
             'xmlns:v8="http://v8.1c.ru/8.1/data/core">\n'
-            '<CommonModule><Properties>'
-            '<Name>Тест</Name>'
-            '<Synonym><v8:item><v8:lang>ru</v8:lang>'
-            '<v8:content>Тест</v8:content>'
-            '</v8:item></Synonym>'
-            '</Properties></CommonModule></MetaDataObject>'
+            "<CommonModule><Properties>"
+            "<Name>Тест</Name>"
+            "<Synonym><v8:item><v8:lang>ru</v8:lang>"
+            "<v8:content>Тест</v8:content>"
+            "</v8:item></Synonym>"
+            "</Properties></CommonModule></MetaDataObject>"
         )
         (exact_dir / "Module.xml").write_text(exact_xml, encoding="utf-8")
 
@@ -845,17 +825,14 @@ class TestExactMatchGuarantee:
 # Fix: all 6 recipes start with search_objects (Finding 3)
 # ---------------------------------------------------------------------------
 
-class TestRecipesSearchObjects:
 
+class TestRecipesSearchObjects:
     def test_all_recipes_start_with_search_objects(self):
         from rlm_tools_bsl.bsl_knowledge import _BUSINESS_RECIPES
+
         for domain, recipe in _BUSINESS_RECIPES.items():
             for level in ("compact", "full"):
                 steps = recipe.get(level, [])
-                assert any("search_objects" in s for s in steps), (
-                    f"Recipe '{domain}' {level} missing search_objects"
-                )
+                assert any("search_objects" in s for s in steps), f"Recipe '{domain}' {level} missing search_objects"
                 # First step must contain search_objects
-                assert "search_objects" in steps[0], (
-                    f"Recipe '{domain}' {level}: search_objects not first step"
-                )
+                assert "search_objects" in steps[0], f"Recipe '{domain}' {level}: search_objects not first step"

@@ -1,4 +1,5 @@
 """Tests for CLI commands (rlm-bsl-index index build/update/info/drop)."""
+
 from __future__ import annotations
 
 import os
@@ -51,7 +52,9 @@ class TestCliBuild:
     def test_cli_build(self, cli_bsl_project):
         project_path, idx_dir = cli_bsl_project
         result = _run_cli(
-            "index", "build", str(project_path),
+            "index",
+            "build",
+            str(project_path),
             env_override={"RLM_INDEX_DIR": str(idx_dir)},
         )
         assert result.returncode == 0
@@ -63,7 +66,10 @@ class TestCliBuild:
     def test_cli_build_no_calls(self, cli_bsl_project):
         project_path, idx_dir = cli_bsl_project
         result = _run_cli(
-            "index", "build", "--no-calls", str(project_path),
+            "index",
+            "build",
+            "--no-calls",
+            str(project_path),
             env_override={"RLM_INDEX_DIR": str(idx_dir)},
         )
         assert result.returncode == 0
@@ -76,12 +82,16 @@ class TestCliUpdate:
         project_path, idx_dir = cli_bsl_project
         # First build
         _run_cli(
-            "index", "build", str(project_path),
+            "index",
+            "build",
+            str(project_path),
             env_override={"RLM_INDEX_DIR": str(idx_dir)},
         )
         # Then update
         result = _run_cli(
-            "index", "update", str(project_path),
+            "index",
+            "update",
+            str(project_path),
             env_override={"RLM_INDEX_DIR": str(idx_dir)},
         )
         assert result.returncode == 0
@@ -92,11 +102,15 @@ class TestCliInfo:
         project_path, idx_dir = cli_bsl_project
         # Build first
         _run_cli(
-            "index", "build", str(project_path),
+            "index",
+            "build",
+            str(project_path),
             env_override={"RLM_INDEX_DIR": str(idx_dir)},
         )
         result = _run_cli(
-            "index", "info", str(project_path),
+            "index",
+            "info",
+            str(project_path),
             env_override={"RLM_INDEX_DIR": str(idx_dir)},
         )
         assert result.returncode == 0
@@ -110,14 +124,18 @@ class TestCliDrop:
         project_path, idx_dir = cli_bsl_project
         # Build first
         _run_cli(
-            "index", "build", str(project_path),
+            "index",
+            "build",
+            str(project_path),
             env_override={"RLM_INDEX_DIR": str(idx_dir)},
         )
         db_files = list(idx_dir.rglob("method_index.db"))
         assert len(db_files) == 1
         # Drop
         result = _run_cli(
-            "index", "drop", str(project_path),
+            "index",
+            "drop",
+            str(project_path),
             env_override={"RLM_INDEX_DIR": str(idx_dir)},
         )
         assert result.returncode == 0

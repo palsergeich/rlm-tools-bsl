@@ -88,6 +88,7 @@ def _xml_direct_text(element, child_name: str) -> str:
 
 # --- CF format helpers ---
 
+
 def _cf_find_synonym(props, ns: dict = _NS_CF) -> str:
     """Extract ru synonym from CF Properties element."""
     syn = props.find("md:Synonym", ns)
@@ -119,11 +120,13 @@ def _cf_parse_attributes(parent, ns: dict = _NS_CF) -> list[dict]:
         props = attr_el.find("md:Properties", ns)
         if props is None:
             continue
-        attrs.append({
-            "name": _xml_find_text(props, "md:Name", ns),
-            "synonym": _cf_find_synonym(props, ns),
-            "type": _cf_parse_type(props, ns),
-        })
+        attrs.append(
+            {
+                "name": _xml_find_text(props, "md:Name", ns),
+                "synonym": _cf_find_synonym(props, ns),
+                "type": _cf_parse_type(props, ns),
+            }
+        )
     return attrs
 
 
@@ -190,11 +193,13 @@ def _parse_cf_xml(root) -> dict:
     for dim_el in search_el.findall("md:Dimension", ns):
         dim_props = dim_el.find("md:Properties", ns)
         if dim_props is not None:
-            dimensions.append({
-                "name": _xml_find_text(dim_props, "md:Name", ns),
-                "synonym": _cf_find_synonym(dim_props, ns),
-                "type": _cf_parse_type(dim_props, ns),
-            })
+            dimensions.append(
+                {
+                    "name": _xml_find_text(dim_props, "md:Name", ns),
+                    "synonym": _cf_find_synonym(dim_props, ns),
+                    "type": _cf_parse_type(dim_props, ns),
+                }
+            )
     if dimensions:
         result["dimensions"] = dimensions
 
@@ -202,11 +207,13 @@ def _parse_cf_xml(root) -> dict:
     for res_el in search_el.findall("md:Resource", ns):
         res_props = res_el.find("md:Properties", ns)
         if res_props is not None:
-            resources.append({
-                "name": _xml_find_text(res_props, "md:Name", ns),
-                "synonym": _cf_find_synonym(res_props, ns),
-                "type": _cf_parse_type(res_props, ns),
-            })
+            resources.append(
+                {
+                    "name": _xml_find_text(res_props, "md:Name", ns),
+                    "synonym": _cf_find_synonym(res_props, ns),
+                    "type": _cf_parse_type(res_props, ns),
+                }
+            )
     if resources:
         result["resources"] = resources
 
@@ -224,6 +231,7 @@ def _parse_cf_xml(root) -> dict:
 
 
 # --- MDO format helpers ---
+
 
 def _mdo_find_synonym(element) -> str:
     """Extract ru synonym from MDO element. MDO uses <synonym><key>ru</key><value>...</value></synonym>."""
@@ -267,11 +275,13 @@ def _mdo_parse_attributes(parent) -> list[dict]:
         local = ch.tag.split("}")[-1] if "}" in ch.tag else ch.tag
         if local != "attributes":
             continue
-        attrs.append({
-            "name": _xml_direct_text(ch, "name"),
-            "synonym": _mdo_find_synonym(ch),
-            "type": _mdo_parse_type(ch),
-        })
+        attrs.append(
+            {
+                "name": _xml_direct_text(ch, "name"),
+                "synonym": _mdo_find_synonym(ch),
+                "type": _mdo_parse_type(ch),
+            }
+        )
     return attrs
 
 
@@ -296,11 +306,13 @@ def _parse_mdo_xml(root) -> dict:
         if local != "tabularSections":
             continue
         ts_attrs = _mdo_parse_attributes(ch)
-        tab_sections.append({
-            "name": _xml_direct_text(ch, "name"),
-            "synonym": _mdo_find_synonym(ch),
-            "attributes": ts_attrs,
-        })
+        tab_sections.append(
+            {
+                "name": _xml_direct_text(ch, "name"),
+                "synonym": _mdo_find_synonym(ch),
+                "attributes": ts_attrs,
+            }
+        )
     if tab_sections:
         result["tabular_sections"] = tab_sections
 
@@ -310,11 +322,13 @@ def _parse_mdo_xml(root) -> dict:
         local = ch.tag.split("}")[-1] if "}" in ch.tag else ch.tag
         if local != "dimensions":
             continue
-        dimensions.append({
-            "name": _xml_direct_text(ch, "name"),
-            "synonym": _mdo_find_synonym(ch),
-            "type": _mdo_parse_type(ch),
-        })
+        dimensions.append(
+            {
+                "name": _xml_direct_text(ch, "name"),
+                "synonym": _mdo_find_synonym(ch),
+                "type": _mdo_parse_type(ch),
+            }
+        )
     if dimensions:
         result["dimensions"] = dimensions
 
@@ -324,11 +338,13 @@ def _parse_mdo_xml(root) -> dict:
         local = ch.tag.split("}")[-1] if "}" in ch.tag else ch.tag
         if local != "resources":
             continue
-        resources.append({
-            "name": _xml_direct_text(ch, "name"),
-            "synonym": _mdo_find_synonym(ch),
-            "type": _mdo_parse_type(ch),
-        })
+        resources.append(
+            {
+                "name": _xml_direct_text(ch, "name"),
+                "synonym": _mdo_find_synonym(ch),
+                "type": _mdo_parse_type(ch),
+            }
+        )
     if resources:
         result["resources"] = resources
 
@@ -383,6 +399,7 @@ def parse_metadata_xml(xml_content: str) -> dict:
 
 
 # --- EventSubscription XML parsers ---
+
 
 def _parse_cf_event_subscription(xml_content: str) -> dict | None:
     """Parse CF-format EventSubscription XML."""
@@ -483,6 +500,7 @@ def parse_event_subscription_xml(xml_content: str) -> dict | None:
 
 # --- ScheduledJob XML parsers ---
 
+
 def _parse_cf_scheduled_job(xml_content: str) -> dict | None:
     """Parse CF-format ScheduledJob XML."""
     try:
@@ -571,6 +589,7 @@ def parse_scheduled_job_xml(xml_content: str) -> dict | None:
 
 # --- Enum XML parsers ---
 
+
 def _parse_cf_enum(xml_content: str) -> dict | None:
     """Parse CF-format Enum XML."""
     try:
@@ -615,10 +634,12 @@ def _parse_cf_enum(xml_content: str) -> dict | None:
                     break
         if ev_props is None:
             continue
-        values.append({
-            "name": _xml_find_text(ev_props, "md:Name", ns),
-            "synonym": _cf_find_synonym(ev_props, ns),
-        })
+        values.append(
+            {
+                "name": _xml_find_text(ev_props, "md:Name", ns),
+                "synonym": _cf_find_synonym(ev_props, ns),
+            }
+        )
 
     return {"name": name, "synonym": synonym, "values": values}
 
@@ -656,6 +677,7 @@ def parse_enum_xml(xml_content: str) -> dict | None:
 
 
 # --- FunctionalOption XML parsers ---
+
 
 def _parse_cf_functional_option(xml_content: str) -> dict | None:
     """Parse CF-format FunctionalOption XML."""
@@ -808,17 +830,21 @@ def _parse_cf_http_service(xml_content: str) -> dict | None:
                                 break
                     if m_props is None:
                         continue
-                    methods.append({
-                        "name": _xml_find_text(m_props, "md:Name", ns),
-                        "http_method": _xml_find_text(m_props, "md:HTTPMethod", ns),
-                        "handler": _xml_find_text(m_props, "md:Handler", ns),
-                    })
+                    methods.append(
+                        {
+                            "name": _xml_find_text(m_props, "md:Name", ns),
+                            "http_method": _xml_find_text(m_props, "md:HTTPMethod", ns),
+                            "handler": _xml_find_text(m_props, "md:Handler", ns),
+                        }
+                    )
 
-            templates.append({
-                "name": tmpl_name,
-                "template": tmpl_template,
-                "methods": methods,
-            })
+            templates.append(
+                {
+                    "name": tmpl_name,
+                    "template": tmpl_template,
+                    "methods": methods,
+                }
+            )
 
     return {"name": name, "root_url": root_url, "templates": templates}
 
@@ -849,16 +875,20 @@ def _parse_mdo_http_service(xml_content: str) -> dict | None:
             m_local = m.tag.split("}")[-1] if "}" in m.tag else m.tag
             if m_local != "methods":
                 continue
-            methods.append({
-                "name": _xml_direct_text(m, "name"),
-                "http_method": _xml_direct_text(m, "httpMethod"),
-                "handler": _xml_direct_text(m, "handler"),
-            })
-        templates.append({
-            "name": tmpl_name,
-            "template": tmpl_template,
-            "methods": methods,
-        })
+            methods.append(
+                {
+                    "name": _xml_direct_text(m, "name"),
+                    "http_method": _xml_direct_text(m, "httpMethod"),
+                    "handler": _xml_direct_text(m, "handler"),
+                }
+            )
+        templates.append(
+            {
+                "name": tmpl_name,
+                "template": tmpl_template,
+                "methods": methods,
+            }
+        )
 
     return {"name": name, "root_url": root_url, "templates": templates}
 
@@ -951,12 +981,14 @@ def _parse_cf_web_service(xml_content: str) -> dict | None:
                         if p_name:
                             params.append(p_name)
 
-            operations.append({
-                "name": op_name,
-                "return_type": return_type,
-                "procedure_name": procedure_name,
-                "params": params,
-            })
+            operations.append(
+                {
+                    "name": op_name,
+                    "return_type": return_type,
+                    "procedure_name": procedure_name,
+                    "params": params,
+                }
+            )
 
     return {"name": name, "namespace": namespace, "operations": operations}
 
@@ -1004,12 +1036,14 @@ def _parse_mdo_web_service(xml_content: str) -> dict | None:
                 if p_name:
                     params.append(p_name)
 
-        operations.append({
-            "name": op_name,
-            "return_type": return_type,
-            "procedure_name": procedure_name,
-            "params": params,
-        })
+        operations.append(
+            {
+                "name": op_name,
+                "return_type": return_type,
+                "procedure_name": procedure_name,
+                "params": params,
+            }
+        )
 
     return {"name": name, "namespace": namespace, "operations": operations}
 
@@ -1084,7 +1118,6 @@ def parse_xdto_types(xdto_content: str) -> list[dict]:
     except ET.ParseError:
         return []
 
-    ns = {"x": _NS_XDTO}
     types: list[dict] = []
 
     for child in root:
@@ -1096,15 +1129,19 @@ def parse_xdto_types(xdto_content: str) -> list[dict]:
         for prop in child:
             p_local = prop.tag.split("}")[-1] if "}" in prop.tag else prop.tag
             if p_local == "property":
-                properties.append({
-                    "name": prop.get("name", ""),
-                    "type": prop.get("type", ""),
-                })
-        types.append({
-            "name": type_name,
-            "kind": local,
-            "properties": properties,
-        })
+                properties.append(
+                    {
+                        "name": prop.get("name", ""),
+                        "type": prop.get("type", ""),
+                    }
+                )
+        types.append(
+            {
+                "name": type_name,
+                "kind": local,
+                "properties": properties,
+            }
+        )
 
     return types
 

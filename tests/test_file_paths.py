@@ -7,9 +7,8 @@ Tests cover:
 - helpers.py integration (indexed vs FS equivalence)
 - hint behavior, ranking, lifecycle
 """
-import os
+
 import sqlite3
-import tempfile
 
 import pytest
 
@@ -19,7 +18,6 @@ from rlm_tools_bsl.bsl_index import (
     IndexReader,
     _can_index_glob,
     _collect_file_paths,
-    _insert_file_paths,
 )
 from rlm_tools_bsl.helpers import make_helpers
 
@@ -28,8 +26,8 @@ from rlm_tools_bsl.helpers import make_helpers
 # _can_index_glob dispatcher tests
 # ---------------------------------------------------------------------------
 
-class TestCanIndexGlob:
 
+class TestCanIndexGlob:
     def test_extension_pattern(self):
         result = _can_index_glob("**/*.mdo")
         assert result == ("by_extension", {"ext": ".mdo"})
@@ -127,8 +125,8 @@ class TestCanIndexGlob:
 # _collect_file_paths tests
 # ---------------------------------------------------------------------------
 
-class TestCollectFilePaths:
 
+class TestCollectFilePaths:
     def test_collects_bsl_mdo_xml(self, tmp_path):
         (tmp_path / "Module.bsl").write_text("// code", encoding="utf-8")
         (tmp_path / "Config.mdo").write_text("<xml/>", encoding="utf-8")
@@ -182,6 +180,7 @@ class TestCollectFilePaths:
 # Builder + Reader integration tests
 # ---------------------------------------------------------------------------
 
+
 def _make_test_fixture(tmp_path):
     """Create a realistic fixture with .bsl/.mdo/.xml files."""
     # BSL modules
@@ -221,16 +220,16 @@ def _make_test_fixture(tmp_path):
     (sub2 / "Расчёты.mdo").write_text("<xml/>", encoding="utf-8")
 
     # XML files
-    (tmp_path / "Configuration" ).mkdir(exist_ok=True)
+    (tmp_path / "Configuration").mkdir(exist_ok=True)
     (tmp_path / "Configuration" / "Configuration.mdo").write_text(
-        "<root><name>TestConfig</name></root>", encoding="utf-8",
+        "<root><name>TestConfig</name></root>",
+        encoding="utf-8",
     )
 
     return tmp_path
 
 
 class TestBuilderFilePaths:
-
     def test_build_populates_file_paths(self, tmp_path, monkeypatch):
         _make_test_fixture(tmp_path)
         monkeypatch.setenv("RLM_INDEX_DIR", str(tmp_path / "idx"))
@@ -271,7 +270,6 @@ class TestBuilderFilePaths:
 
 
 class TestReaderGlobFiles:
-
     @pytest.fixture
     def reader(self, tmp_path, monkeypatch):
         _make_test_fixture(tmp_path)
@@ -338,7 +336,6 @@ class TestReaderGlobFiles:
 
 
 class TestReaderTreePaths:
-
     @pytest.fixture
     def reader(self, tmp_path, monkeypatch):
         _make_test_fixture(tmp_path)
@@ -368,7 +365,6 @@ class TestReaderTreePaths:
 
 
 class TestReaderFindFiles:
-
     @pytest.fixture
     def reader(self, tmp_path, monkeypatch):
         _make_test_fixture(tmp_path)
@@ -424,6 +420,7 @@ class TestReaderFindFiles:
 # ---------------------------------------------------------------------------
 # helpers.py integration tests (indexed vs FS)
 # ---------------------------------------------------------------------------
+
 
 class TestHelpersIntegration:
     """Test that indexed path in helpers.py works correctly."""
@@ -500,8 +497,8 @@ class TestHelpersIntegration:
 # Update lifecycle tests
 # ---------------------------------------------------------------------------
 
-class TestUpdateFilePaths:
 
+class TestUpdateFilePaths:
     def test_update_refreshes_file_paths(self, tmp_path, monkeypatch):
         _make_test_fixture(tmp_path)
         monkeypatch.setenv("RLM_INDEX_DIR", str(tmp_path / "idx"))
@@ -531,7 +528,7 @@ class TestUpdateFilePaths:
 # Version bump test
 # ---------------------------------------------------------------------------
 
-class TestVersionBump:
 
+class TestVersionBump:
     def test_builder_version_is_8(self):
         assert BUILDER_VERSION == 8

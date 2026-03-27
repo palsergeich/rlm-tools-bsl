@@ -7,6 +7,7 @@ Tests verify that when IndexReader is provided to make_bsl_helpers:
 - Without index: helpers fall back to live parsing (existing behavior)
 - Strategy text includes INDEX section when index is loaded
 """
+
 import json
 import os
 import sqlite3
@@ -149,7 +150,10 @@ def built_index(tmp_bsl_project, monkeypatch):
     monkeypatch.setenv("RLM_INDEX_DIR", str(tmp_bsl_project / ".index"))
     builder = IndexBuilder()
     db_path = builder.build(
-        str(tmp_bsl_project), build_calls=True, build_metadata=True, build_fts=True,
+        str(tmp_bsl_project),
+        build_calls=True,
+        build_metadata=True,
+        build_fts=True,
     )
     reader = IndexReader(db_path)
     yield reader
@@ -176,13 +180,11 @@ def _make_helpers(base_path, idx_reader=None):
 # Tests WITH index — fast path
 # =====================================================================
 
-class TestWithIndex:
 
+class TestWithIndex:
     def test_extract_procedures_from_index(self, tmp_bsl_project, built_index):
         bsl = _make_helpers(tmp_bsl_project, built_index)
-        procs = bsl["extract_procedures"](
-            "CommonModules/МойМодуль/Ext/Module.bsl"
-        )
+        procs = bsl["extract_procedures"]("CommonModules/МойМодуль/Ext/Module.bsl")
         assert len(procs) == 3
         names = [p["name"] for p in procs]
         assert "ЗаполнитьТабличнуюЧасть" in names
@@ -191,18 +193,14 @@ class TestWithIndex:
 
     def test_extract_procedures_export_flag(self, tmp_bsl_project, built_index):
         bsl = _make_helpers(tmp_bsl_project, built_index)
-        procs = bsl["extract_procedures"](
-            "CommonModules/МойМодуль/Ext/Module.bsl"
-        )
+        procs = bsl["extract_procedures"]("CommonModules/МойМодуль/Ext/Module.bsl")
         by_name = {p["name"]: p for p in procs}
         assert by_name["ЗаполнитьТабличнуюЧасть"]["is_export"] is True
         assert by_name["ВычислитьИтоги"]["is_export"] is False
 
     def test_find_exports_from_index(self, tmp_bsl_project, built_index):
         bsl = _make_helpers(tmp_bsl_project, built_index)
-        exports = bsl["find_exports"](
-            "CommonModules/МойМодуль/Ext/Module.bsl"
-        )
+        exports = bsl["find_exports"]("CommonModules/МойМодуль/Ext/Module.bsl")
         names = [e["name"] for e in exports]
         assert "ЗаполнитьТабличнуюЧасть" in names
         assert "ПолучитьДатуСеанса" in names
@@ -269,22 +267,18 @@ class TestWithIndex:
 # Tests WITHOUT index — fallback
 # =====================================================================
 
-class TestWithoutIndex:
 
+class TestWithoutIndex:
     def test_extract_procedures_fallback(self, tmp_bsl_project):
         bsl = _make_helpers(tmp_bsl_project, idx_reader=None)
-        procs = bsl["extract_procedures"](
-            "CommonModules/МойМодуль/Ext/Module.bsl"
-        )
+        procs = bsl["extract_procedures"]("CommonModules/МойМодуль/Ext/Module.bsl")
         assert len(procs) == 3
         names = [p["name"] for p in procs]
         assert "ЗаполнитьТабличнуюЧасть" in names
 
     def test_find_exports_fallback(self, tmp_bsl_project):
         bsl = _make_helpers(tmp_bsl_project, idx_reader=None)
-        exports = bsl["find_exports"](
-            "CommonModules/МойМодуль/Ext/Module.bsl"
-        )
+        exports = bsl["find_exports"]("CommonModules/МойМодуль/Ext/Module.bsl")
         assert len(exports) == 2
 
     def test_find_callers_context_fallback(self, tmp_bsl_project):
@@ -317,8 +311,8 @@ class TestWithoutIndex:
 # IndexReader new methods (unit tests)
 # =====================================================================
 
-class TestIndexReaderNewMethods:
 
+class TestIndexReaderNewMethods:
     def test_get_event_subscriptions_all(self, built_index):
         result = built_index.get_event_subscriptions()
         assert result is not None
@@ -379,8 +373,8 @@ class TestIndexReaderNewMethods:
 # Strategy text with index
 # =====================================================================
 
-class TestStrategyWithIndex:
 
+class TestStrategyWithIndex:
     def test_strategy_includes_index_section(self):
         idx_stats = {
             "methods": 500,
@@ -400,7 +394,10 @@ class TestStrategyWithIndex:
         idx_stats = {"methods": 100, "calls": 200, "has_fts": False}
         idx_warnings = ["Index is 10 days old — verify critical findings"]
         strategy = get_strategy(
-            "medium", None, idx_stats=idx_stats, idx_warnings=idx_warnings,
+            "medium",
+            None,
+            idx_stats=idx_stats,
+            idx_warnings=idx_warnings,
         )
         assert "WARNING:" in strategy
         assert "10 days old" in strategy
@@ -434,7 +431,6 @@ def test_index_state_from_sqlite(tmp_bsl_project, built_index):
 
 def test_detected_prefixes_in_index(tmp_bsl_project, monkeypatch):
     """Detected prefixes are stored in index_meta and retrievable."""
-    import os
     import tempfile
 
     # Create a project with objects that have a common prefix (3+ for threshold)
@@ -624,6 +620,7 @@ def test_find_register_movements_fast_path(tmp_path, monkeypatch):
 # Index vs FS parity fixes (v1.3.2 bugfixes)
 # ---------------------------------------------------------------------------
 
+
 def test_role_rights_full_object_name_stored(tmp_path, monkeypatch):
     """Builder stores full object name (Catalog.ТестСправочник), reader finds by substring."""
     cm_dir = tmp_path / "CommonModules" / "Модуль" / "Ext"
@@ -642,9 +639,7 @@ def test_role_rights_full_object_name_stored(tmp_path, monkeypatch):
     reader = IndexReader(db_path)
 
     # Full name stored in DB
-    rows = reader._conn.execute(
-        "SELECT object_name FROM role_rights WHERE role_name = 'ТестРоль'"
-    ).fetchall()
+    rows = reader._conn.execute("SELECT object_name FROM role_rights WHERE role_name = 'ТестРоль'").fetchall()
     obj_names = [r["object_name"] for r in rows]
     assert any("Catalog.ТестСправочник" in n for n in obj_names), f"Expected full name, got {obj_names}"
 
@@ -702,9 +697,7 @@ def test_manager_table_only_definitions(tmp_path, monkeypatch):
     """manager_tables regex matches only Функция/Процедура definitions, not calls."""
     doc_dir = tmp_path / "Documents" / "МТДок" / "Ext"
     doc_dir.mkdir(parents=True)
-    (doc_dir / "ObjectModule.bsl").write_text(
-        "Процедура Проведение()\nКонецПроцедуры\n", encoding="utf-8-sig"
-    )
+    (doc_dir / "ObjectModule.bsl").write_text("Процедура Проведение()\nКонецПроцедуры\n", encoding="utf-8-sig")
     (doc_dir / "ManagerModule.bsl").write_text(_MANAGER_MODULE_WITH_CALLS, encoding="utf-8-sig")
 
     (tmp_path / "Configuration.xml").write_text("<Configuration/>", encoding="utf-8")
@@ -745,9 +738,7 @@ def test_adapted_registers_build(tmp_path, monkeypatch):
     """Builder extracts adapted registers from АдаптированныйТекстЗапросаДвиженийПоРегистру."""
     doc_dir = tmp_path / "Documents" / "АдДок" / "Ext"
     doc_dir.mkdir(parents=True)
-    (doc_dir / "ObjectModule.bsl").write_text(
-        "Процедура Проведение()\nКонецПроцедуры\n", encoding="utf-8-sig"
-    )
+    (doc_dir / "ObjectModule.bsl").write_text("Процедура Проведение()\nКонецПроцедуры\n", encoding="utf-8-sig")
     (doc_dir / "ManagerModule.bsl").write_text(_MANAGER_MODULE_ADAPTED, encoding="utf-8-sig")
 
     (tmp_path / "Configuration.xml").write_text("<Configuration/>", encoding="utf-8")
@@ -877,9 +868,7 @@ def test_update_creates_integration_tables_for_old_index(tmp_path, monkeypatch):
     """update() creates http_services/web_services/xdto_packages for pre-v6 indexes."""
     cm_dir = tmp_path / "CommonModules" / "Модуль" / "Ext"
     cm_dir.mkdir(parents=True)
-    (cm_dir / "Module.bsl").write_text(
-        "Процедура Тест()\nКонецПроцедуры\n", encoding="utf-8-sig"
-    )
+    (cm_dir / "Module.bsl").write_text("Процедура Тест()\nКонецПроцедуры\n", encoding="utf-8-sig")
     (tmp_path / "Configuration.xml").write_text("<Configuration/>", encoding="utf-8")
     monkeypatch.setenv("RLM_INDEX_DIR", str(tmp_path / ".index"))
 
@@ -904,12 +893,7 @@ def test_update_creates_integration_tables_for_old_index(tmp_path, monkeypatch):
 
     # Verify tables exist
     conn = sqlite3.connect(str(db_path))
-    tables = {
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
-    }
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     conn.close()
     assert "http_services" in tables
     assert "web_services" in tables
@@ -922,9 +906,7 @@ def test_update_refreshes_detected_prefixes(tmp_path, monkeypatch):
     for name in ["тст_Справочник1", "тст_Справочник2", "тст_Справочник3"]:
         cat_dir = tmp_path / "Catalogs" / name / "Ext"
         cat_dir.mkdir(parents=True)
-        (cat_dir / "ObjectModule.bsl").write_text(
-            "Процедура Тест()\nКонецПроцедуры\n", encoding="utf-8-sig"
-        )
+        (cat_dir / "ObjectModule.bsl").write_text("Процедура Тест()\nКонецПроцедуры\n", encoding="utf-8-sig")
     (tmp_path / "Configuration.xml").write_text("<Configuration/>", encoding="utf-8")
     monkeypatch.setenv("RLM_INDEX_DIR", str(tmp_path / ".index"))
 
@@ -933,9 +915,7 @@ def test_update_refreshes_detected_prefixes(tmp_path, monkeypatch):
 
     # Verify initial prefix detected
     conn = sqlite3.connect(str(db_path))
-    row = conn.execute(
-        "SELECT value FROM index_meta WHERE key = 'detected_prefixes'"
-    ).fetchone()
+    row = conn.execute("SELECT value FROM index_meta WHERE key = 'detected_prefixes'").fetchone()
     conn.close()
     initial_prefixes = json.loads(row[0]) if row else []
     assert any("тст" in p for p in initial_prefixes)
@@ -944,16 +924,12 @@ def test_update_refreshes_detected_prefixes(tmp_path, monkeypatch):
     for name in ["абв_Документ1", "абв_Документ2", "абв_Документ3"]:
         doc_dir = tmp_path / "Documents" / name / "Ext"
         doc_dir.mkdir(parents=True)
-        (doc_dir / "ObjectModule.bsl").write_text(
-            "Процедура Тест2()\nКонецПроцедуры\n", encoding="utf-8-sig"
-        )
+        (doc_dir / "ObjectModule.bsl").write_text("Процедура Тест2()\nКонецПроцедуры\n", encoding="utf-8-sig")
 
     builder.update(str(tmp_path))
 
     conn = sqlite3.connect(str(db_path))
-    row = conn.execute(
-        "SELECT value FROM index_meta WHERE key = 'detected_prefixes'"
-    ).fetchone()
+    row = conn.execute("SELECT value FROM index_meta WHERE key = 'detected_prefixes'").fetchone()
     conn.close()
     updated_prefixes = json.loads(row[0])
     assert any("тст" in p for p in updated_prefixes)

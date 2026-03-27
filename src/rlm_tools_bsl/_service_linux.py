@@ -1,9 +1,10 @@
 """Linux systemd --user service management for rlm-tools-bsl."""
+
 import shutil
 import subprocess
 from pathlib import Path
 
-from rlm_tools_bsl.service import CONFIG_FILE, load_config, save_config
+from rlm_tools_bsl.service import CONFIG_FILE, save_config
 
 SERVICE_NAME = "rlm-tools-bsl"
 
@@ -11,6 +12,7 @@ SERVICE_NAME = "rlm-tools-bsl"
 def _get_version() -> str:
     try:
         from importlib.metadata import version
+
         return version("rlm-tools-bsl")
     except Exception:
         return "?"
@@ -29,9 +31,7 @@ def install(host: str, port: int, env_file: str | None) -> None:
     unit_dir = _unit_path().parent
     unit_dir.mkdir(parents=True, exist_ok=True)
 
-    env_line = (
-        f"EnvironmentFile=-{env_file}" if env_file else "# EnvironmentFile not configured"
-    )
+    env_line = f"EnvironmentFile=-{env_file}" if env_file else "# EnvironmentFile not configured"
     exe = _exe_path()
     unit = (
         "[Unit]\n"

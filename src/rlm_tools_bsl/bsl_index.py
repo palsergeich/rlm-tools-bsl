@@ -3,6 +3,7 @@
 Provides fast lookup of all methods across a 1C/BSL codebase without full file scans.
 The index is stored on disk and supports incremental updates.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -38,22 +39,66 @@ _QUALIFIED_CALL_RE = re.compile(r"(\w+)\.(\w+)\s*\(")
 _SIMPLE_CALL_RE = re.compile(r"(\w+)\s*\(")
 
 # BSL keywords to exclude from call graph
-_BSL_KEYWORDS: frozenset[str] = frozenset({
-    # Russian
-    "Если", "Тогда", "Иначе", "ИначеЕсли", "КонецЕсли",
-    "Пока", "Для", "Каждого", "Цикл", "КонецЦикла",
-    "Возврат", "Новый", "Тип", "ТипЗнч", "Знач", "Перем",
-    "Попытка", "Исключение", "КонецПопытки", "Выполнить",
-    "НЕ", "И", "ИЛИ",
-    "Процедура", "Функция", "КонецПроцедуры", "КонецФункции",
-    # English
-    "If", "Then", "Else", "ElsIf", "EndIf",
-    "While", "For", "Each", "Do", "EndDo",
-    "Return", "New", "Type", "TypeOf", "Val", "Var",
-    "Try", "Except", "EndTry", "Execute",
-    "NOT", "AND", "OR",
-    "Procedure", "Function", "EndProcedure", "EndFunction",
-})
+_BSL_KEYWORDS: frozenset[str] = frozenset(
+    {
+        # Russian
+        "Если",
+        "Тогда",
+        "Иначе",
+        "ИначеЕсли",
+        "КонецЕсли",
+        "Пока",
+        "Для",
+        "Каждого",
+        "Цикл",
+        "КонецЦикла",
+        "Возврат",
+        "Новый",
+        "Тип",
+        "ТипЗнч",
+        "Знач",
+        "Перем",
+        "Попытка",
+        "Исключение",
+        "КонецПопытки",
+        "Выполнить",
+        "НЕ",
+        "И",
+        "ИЛИ",
+        "Процедура",
+        "Функция",
+        "КонецПроцедуры",
+        "КонецФункции",
+        # English
+        "If",
+        "Then",
+        "Else",
+        "ElsIf",
+        "EndIf",
+        "While",
+        "For",
+        "Each",
+        "Do",
+        "EndDo",
+        "Return",
+        "New",
+        "Type",
+        "TypeOf",
+        "Val",
+        "Var",
+        "Try",
+        "Except",
+        "EndTry",
+        "Execute",
+        "NOT",
+        "AND",
+        "OR",
+        "Procedure",
+        "Function",
+        "EndProcedure",
+        "EndFunction",
+    }
+)
 
 # Case-insensitive set for fast lookup
 _BSL_KEYWORDS_LOWER: frozenset[str] = frozenset(k.lower() for k in _BSL_KEYWORDS)
@@ -307,6 +352,7 @@ _SYNONYM_CATEGORIES: frozenset[str] = frozenset(_CATEGORY_RU.keys())
 # ---------------------------------------------------------------------------
 class IndexStatus(Enum):
     """Result of freshness check for an existing method index."""
+
     FRESH = "fresh"
     STALE = "stale"
     STALE_AGE = "stale_age"
@@ -409,6 +455,7 @@ def _check_content_sample(db_path: Path, base_path: str) -> IndexStatus | None:
 
     if len(rows) > 1:
         from concurrent.futures import ThreadPoolExecutor as _TP
+
         with _TP(max_workers=min(5, len(rows))) as pool:
             results = list(pool.map(_stat_check, rows))
         mismatches = sum(results)
@@ -830,16 +877,18 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         handler_procedure = parts[-1] if parts else ""
         source_types = parsed.get("source_types") or []
         rel = fp.relative_to(base).as_posix()
-        result["event_subscriptions"].append((
-            parsed["name"],
-            parsed.get("synonym") or "",
-            parsed.get("event") or "",
-            handler_module,
-            handler_procedure,
-            json.dumps(source_types, ensure_ascii=False),
-            len(source_types),
-            rel,
-        ))
+        result["event_subscriptions"].append(
+            (
+                parsed["name"],
+                parsed.get("synonym") or "",
+                parsed.get("event") or "",
+                handler_module,
+                handler_procedure,
+                json.dumps(source_types, ensure_ascii=False),
+                len(source_types),
+                rel,
+            )
+        )
 
     # ScheduledJobs
     for fp in _glob_xml("ScheduledJobs"):
@@ -855,18 +904,20 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         handler_procedure = parts[-1] if parts else ""
         restart = parsed.get("restart_on_failure") or {}
         rel = fp.relative_to(base).as_posix()
-        result["scheduled_jobs"].append((
-            parsed["name"],
-            parsed.get("synonym") or "",
-            method_name,
-            handler_module,
-            handler_procedure,
-            1 if parsed.get("use", True) else 0,
-            1 if parsed.get("predefined", False) else 0,
-            restart.get("count", 0),
-            restart.get("interval", 0),
-            rel,
-        ))
+        result["scheduled_jobs"].append(
+            (
+                parsed["name"],
+                parsed.get("synonym") or "",
+                method_name,
+                handler_module,
+                handler_procedure,
+                1 if parsed.get("use", True) else 0,
+                1 if parsed.get("predefined", False) else 0,
+                restart.get("count", 0),
+                restart.get("interval", 0),
+                rel,
+            )
+        )
 
     # FunctionalOptions
     for fp in _glob_xml("FunctionalOptions"):
@@ -878,13 +929,15 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
             continue
         fo_content = parsed.get("content") or []
         rel = fp.relative_to(base).as_posix()
-        result["functional_options"].append((
-            parsed["name"],
-            parsed.get("synonym") or "",
-            parsed.get("location") or "",
-            json.dumps(fo_content, ensure_ascii=False),
-            rel,
-        ))
+        result["functional_options"].append(
+            (
+                parsed["name"],
+                parsed.get("synonym") or "",
+                parsed.get("location") or "",
+                json.dumps(fo_content, ensure_ascii=False),
+                rel,
+            )
+        )
 
     # Enums
     for fp in _glob_xml("Enums"):
@@ -895,12 +948,14 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         if not parsed or not parsed.get("name"):
             continue
         rel = fp.relative_to(base).as_posix()
-        result["enum_values"].append((
-            parsed["name"],
-            parsed.get("synonym") or "",
-            json.dumps(parsed.get("values", []), ensure_ascii=False),
-            rel,
-        ))
+        result["enum_values"].append(
+            (
+                parsed["name"],
+                parsed.get("synonym") or "",
+                json.dumps(parsed.get("values", []), ensure_ascii=False),
+                rel,
+            )
+        )
 
     # Subsystems
     for fp in _glob_xml("Subsystems"):
@@ -915,12 +970,14 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         sub_content = parsed.get("content", [])
         rel = fp.relative_to(base).as_posix()
         for obj_ref in sub_content:
-            result["subsystem_content"].append((
-                sub_name,
-                sub_synonym,
-                obj_ref,
-                rel,
-            ))
+            result["subsystem_content"].append(
+                (
+                    sub_name,
+                    sub_synonym,
+                    obj_ref,
+                    rel,
+                )
+            )
 
     # HTTPServices
     for fp in _glob_xml("HTTPServices"):
@@ -931,12 +988,14 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         if not parsed or not parsed.get("name"):
             continue
         rel = fp.relative_to(base).as_posix()
-        result["http_services"].append((
-            parsed["name"],
-            parsed.get("root_url") or "",
-            json.dumps(parsed.get("templates", []), ensure_ascii=False),
-            rel,
-        ))
+        result["http_services"].append(
+            (
+                parsed["name"],
+                parsed.get("root_url") or "",
+                json.dumps(parsed.get("templates", []), ensure_ascii=False),
+                rel,
+            )
+        )
 
     # WebServices
     for fp in _glob_xml("WebServices"):
@@ -947,12 +1006,14 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         if not parsed or not parsed.get("name"):
             continue
         rel = fp.relative_to(base).as_posix()
-        result["web_services"].append((
-            parsed["name"],
-            parsed.get("namespace") or "",
-            json.dumps(parsed.get("operations", []), ensure_ascii=False),
-            rel,
-        ))
+        result["web_services"].append(
+            (
+                parsed["name"],
+                parsed.get("namespace") or "",
+                json.dumps(parsed.get("operations", []), ensure_ascii=False),
+                rel,
+            )
+        )
 
     # XDTOPackages
     for fp in _glob_xml("XDTOPackages"):
@@ -970,12 +1031,14 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
                 if xdto_content:
                     parsed["types"] = parse_xdto_types(xdto_content)
         rel = fp.relative_to(base).as_posix()
-        result["xdto_packages"].append((
-            parsed["name"],
-            parsed.get("namespace") or "",
-            json.dumps(parsed.get("types", []), ensure_ascii=False),
-            rel,
-        ))
+        result["xdto_packages"].append(
+            (
+                parsed["name"],
+                parsed.get("namespace") or "",
+                json.dumps(parsed.get("types", []), ensure_ascii=False),
+                rel,
+            )
+        )
 
     return result
 
@@ -1010,17 +1073,13 @@ def _insert_metadata_tables(conn: sqlite3.Connection, tables: dict[str, list[tup
 
     if tables["functional_options"]:
         conn.executemany(
-            "INSERT INTO functional_options "
-            "(name, synonym, location, content, file) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO functional_options (name, synonym, location, content, file) VALUES (?, ?, ?, ?, ?)",
             tables["functional_options"],
         )
 
     if tables.get("enum_values"):
         conn.executemany(
-            "INSERT INTO enum_values "
-            "(name, synonym, values_json, source_file) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO enum_values (name, synonym, values_json, source_file) VALUES (?, ?, ?, ?)",
             tables["enum_values"],
         )
 
@@ -1030,9 +1089,7 @@ def _insert_metadata_tables(conn: sqlite3.Connection, tables: dict[str, list[tup
         pass
     if tables.get("subsystem_content"):
         conn.executemany(
-            "INSERT INTO subsystem_content "
-            "(subsystem_name, subsystem_synonym, object_ref, file) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO subsystem_content (subsystem_name, subsystem_synonym, object_ref, file) VALUES (?, ?, ?, ?)",
             tables["subsystem_content"],
         )
 
@@ -1067,8 +1124,16 @@ _FILE_NAV_EXTENSIONS = {".bsl", ".mdo", ".xml"}
 
 # Directories to skip (same as helpers._SKIP_DIRS)
 _SKIP_DIRS_NAV = {
-    ".git", ".build", "node_modules", ".venv", "venv",
-    "__pycache__", ".tox", ".mypy_cache", ".cache", ".rlm_cache",
+    ".git",
+    ".build",
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".tox",
+    ".mypy_cache",
+    ".cache",
+    ".rlm_cache",
 }
 
 
@@ -1083,10 +1148,7 @@ def _collect_file_paths(base_path: str) -> list[tuple]:
 
     for dirpath, dirnames, filenames in os.walk(base):
         # Filter out hidden/skip directories
-        dirnames[:] = [
-            d for d in dirnames
-            if d not in _SKIP_DIRS_NAV and not d.startswith(".")
-        ]
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS_NAV and not d.startswith(".")]
         for fname in filenames:
             if fname.startswith("."):
                 continue
@@ -1128,24 +1190,24 @@ def _insert_file_paths(conn: sqlite3.Connection, rows: list[tuple]) -> None:
 # ---------------------------------------------------------------------------
 # Regex for register movements (in-band extraction from Document BSL)
 # ---------------------------------------------------------------------------
-_MOVEMENTS_RE = re.compile(r'\u0414\u0432\u0438\u0436\u0435\u043d\u0438\u044f\.(\w+)')  # Движения.RegName
+_MOVEMENTS_RE = re.compile(r"\u0414\u0432\u0438\u0436\u0435\u043d\u0438\u044f\.(\w+)")  # Движения.RegName
 _ERP_MECHANISM_RE = re.compile(
-    r'\u041c\u0435\u0445\u0430\u043d\u0438\u0437\u043c\u044b\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430'
+    r"\u041c\u0435\u0445\u0430\u043d\u0438\u0437\u043c\u044b\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430"
     r'\.\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c\(\s*"(\w+)"'
 )  # МеханизмыДокумента.Добавить("RegName")
 _MANAGER_TABLE_RE = re.compile(
-    r'(?:\u0424\u0443\u043d\u043a\u0446\u0438\u044f|\u041f\u0440\u043e\u0446\u0435\u0434\u0443\u0440\u0430)\s+'
-    r'\u0422\u0435\u043a\u0441\u0442\u0417\u0430\u043f\u0440\u043e\u0441\u0430'
-    r'\u0422\u0430\u0431\u043b\u0438\u0446\u0430(\w+)\s*\(',
+    r"(?:\u0424\u0443\u043d\u043a\u0446\u0438\u044f|\u041f\u0440\u043e\u0446\u0435\u0434\u0443\u0440\u0430)\s+"
+    r"\u0422\u0435\u043a\u0441\u0442\u0417\u0430\u043f\u0440\u043e\u0441\u0430"
+    r"\u0422\u0430\u0431\u043b\u0438\u0446\u0430(\w+)\s*\(",
     re.IGNORECASE,
 )  # Функция|Процедура ТекстЗапросаТаблицаRegName(
 _ADAPTED_PROC_RE = re.compile(
-    r'(?:\u0424\u0443\u043d\u043a\u0446\u0438\u044f|\u041f\u0440\u043e\u0446\u0435\u0434\u0443\u0440\u0430)\s+'
-    r'\u0410\u0434\u0430\u043f\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0439'
-    r'\u0422\u0435\u043a\u0441\u0442\u0417\u0430\u043f\u0440\u043e\u0441\u0430'
-    r'\u0414\u0432\u0438\u0436\u0435\u043d\u0438\u0439\u041f\u043e\u0420\u0435\u0433\u0438\u0441\u0442\u0440\u0443\b.*?\n'
-    r'(.*?)'
-    r'\n\s*\u041a\u043e\u043d\u0435\u0446(?:\u0424\u0443\u043d\u043a\u0446\u0438\u0438|\u041f\u0440\u043e\u0446\u0435\u0434\u0443\u0440\u044b)',
+    r"(?:\u0424\u0443\u043d\u043a\u0446\u0438\u044f|\u041f\u0440\u043e\u0446\u0435\u0434\u0443\u0440\u0430)\s+"
+    r"\u0410\u0434\u0430\u043f\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0439"
+    r"\u0422\u0435\u043a\u0441\u0442\u0417\u0430\u043f\u0440\u043e\u0441\u0430"
+    r"\u0414\u0432\u0438\u0436\u0435\u043d\u0438\u0439\u041f\u043e\u0420\u0435\u0433\u0438\u0441\u0442\u0440\u0443\b.*?\n"
+    r"(.*?)"
+    r"\n\s*\u041a\u043e\u043d\u0435\u0446(?:\u0424\u0443\u043d\u043a\u0446\u0438\u0438|\u041f\u0440\u043e\u0446\u0435\u0434\u0443\u0440\u044b)",
     re.IGNORECASE | re.DOTALL,
 )  # Функция|Процедура АдаптированныйТекстЗапросаДвиженийПоРегистру...КонецФункции|КонецПроцедуры
 _ADAPTED_REG_RE = re.compile(
@@ -1189,10 +1251,18 @@ def _parse_regions(lines: list[str]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Module header comment extractor
 # ---------------------------------------------------------------------------
-_HEADER_STOP_WORDS = frozenset((
-    "процедура", "функция", "procedure", "function",
-    "#область", "#region", "перем", "var",
-))
+_HEADER_STOP_WORDS = frozenset(
+    (
+        "процедура",
+        "функция",
+        "procedure",
+        "function",
+        "#область",
+        "#region",
+        "перем",
+        "var",
+    )
+)
 
 
 def _extract_header_comment(lines: list[str], max_chars: int = 500) -> str:
@@ -1228,6 +1298,7 @@ def _extract_header_comment(lines: list[str], max_chars: int = 500) -> str:
 
 class FileResult(NamedTuple):
     """Result of processing a single .bsl file."""
+
     info: BslFileInfo
     mtime: float
     size: int
@@ -1239,7 +1310,9 @@ class FileResult(NamedTuple):
 
 
 def _extract_movements(
-    content: str, info: BslFileInfo, rel_path: str,
+    content: str,
+    info: BslFileInfo,
+    rel_path: str,
 ) -> list[tuple[str, str, str]]:
     """Extract register movements from Document modules (in-band, no extra I/O)."""
     if info.category != "Documents":
@@ -1321,7 +1394,9 @@ def _process_single_file(
 #     <right><name>Read</name><value>true</value></right>
 #   </object>
 def _parse_role_rights_for_index(
-    content: str, role_name: str, file_path: str,
+    content: str,
+    role_name: str,
+    file_path: str,
 ) -> list[tuple[str, str, str, str]]:
     """Parse role rights using ElementTree. Returns list of (role_name, object_name, right_name, file)."""
     from rlm_tools_bsl.bsl_xml_parsers import parse_rights_xml
@@ -1339,7 +1414,6 @@ def _collect_role_rights(base_path: str) -> list[tuple[str, str, str, str]]:
 
     Returns list of (role_name, object_name, right_name, file_path).
     """
-    import glob as glob_mod
 
     base = Path(base_path)
     all_results: list[tuple[str, str, str, str]] = []
@@ -1383,6 +1457,7 @@ def _collect_role_rights(base_path: str) -> list[tuple[str, str, str, str]]:
 # Object synonym collection (business-name search)
 # ---------------------------------------------------------------------------
 
+
 def _collect_object_synonyms(base_path: str) -> list[tuple[str, str, str, str]]:
     """Collect object synonyms from all metadata categories.
 
@@ -1403,7 +1478,9 @@ def _collect_object_synonyms(base_path: str) -> list[tuple[str, str, str, str]]:
             return None
 
     def _parse_and_append(
-        fp: Path, cat: str, obj_name: str,
+        fp: Path,
+        cat: str,
+        obj_name: str,
         results: list[tuple[str, str, str, str]],
     ) -> None:
         content = _read_safe(fp)
@@ -1455,7 +1532,8 @@ def _collect_object_synonyms(base_path: str) -> list[tuple[str, str, str, str]]:
         return results
 
     def _collect_subsystems_recursive(
-        parent_dir: Path, cat: str,
+        parent_dir: Path,
+        cat: str,
         results: list[tuple[str, str, str, str]],
     ) -> None:
         """Recursively collect synonyms from nested Subsystems."""
@@ -1498,7 +1576,7 @@ def _collect_object_synonyms(base_path: str) -> list[tuple[str, str, str, str]]:
 # ---------------------------------------------------------------------------
 # Prefix detection from index
 # ---------------------------------------------------------------------------
-_PREFIX_RE = re.compile(r'^([a-z\u0430-\u044f\u0451]+_?)')
+_PREFIX_RE = re.compile(r"^([a-z\u0430-\u044f\u0451]+_?)")
 
 
 def _detect_prefixes(conn: sqlite3.Connection) -> list[str]:
@@ -1507,9 +1585,7 @@ def _detect_prefixes(conn: sqlite3.Connection) -> list[str]:
     Uses the same heuristic as bsl_helpers._ensure_prefixes() but runs on
     already-indexed data (no I/O). Returns sorted list of frequent prefixes.
     """
-    rows = conn.execute(
-        "SELECT DISTINCT object_name FROM modules WHERE object_name IS NOT NULL"
-    ).fetchall()
+    rows = conn.execute("SELECT DISTINCT object_name FROM modules WHERE object_name IS NOT NULL").fetchall()
 
     prefix_counts: dict[str, int] = {}
     for row in rows:
@@ -1581,16 +1657,22 @@ class IndexBuilder:
             conn.executescript(_SCHEMA_SQL)
             fp_rows = _collect_file_paths(base_path)
             _insert_file_paths(conn, fp_rows)
-            self._write_meta(conn, base_path, 0, "", build_calls, build_metadata,
-                             build_fts=build_fts, file_paths_count=len(fp_rows),
-                             build_synonyms=build_synonyms)
+            self._write_meta(
+                conn,
+                base_path,
+                0,
+                "",
+                build_calls,
+                build_metadata,
+                build_fts=build_fts,
+                file_paths_count=len(fp_rows),
+                build_synonyms=build_synonyms,
+            )
             conn.close()
             return db_path
 
         # Compute paths hash
-        rel_paths = [
-            Path(f).relative_to(base).as_posix() for f in bsl_files
-        ]
+        rel_paths = [Path(f).relative_to(base).as_posix() for f in bsl_files]
         paths_hash = _paths_hash(rel_paths)
 
         # Parallel processing
@@ -1598,10 +1680,7 @@ class IndexBuilder:
         workers = min(os.cpu_count() or 4, 8)
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(_process_single_file, fp, base_path, build_calls): fp
-                for fp in bsl_files
-            }
+            futures = {pool.submit(_process_single_file, fp, base_path, build_calls): fp for fp in bsl_files}
             done_count = 0
             for future in as_completed(futures):
                 done_count += 1
@@ -1610,7 +1689,9 @@ class IndexBuilder:
                     rate = done_count / elapsed if elapsed > 0 else 0
                     logger.info(
                         "Progress: %d/%d files (%.0f files/sec)",
-                        done_count, total_files, rate,
+                        done_count,
+                        total_files,
+                        rate,
                     )
                 result = future.result()
                 if result is not None:
@@ -1640,8 +1721,7 @@ class IndexBuilder:
                     all_movements.append((r.info.object_name, reg_name, source, file_path_str))
         if all_movements:
             conn.executemany(
-                "INSERT INTO register_movements (document_name, register_name, source, file) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO register_movements (document_name, register_name, source, file) VALUES (?, ?, ?, ?)",
                 all_movements,
             )
             conn.commit()
@@ -1651,13 +1731,11 @@ class IndexBuilder:
         role_rights = _collect_role_rights(base_path)
         if role_rights:
             conn.executemany(
-                "INSERT INTO role_rights (role_name, object_name, right_name, file) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO role_rights (role_name, object_name, right_name, file) VALUES (?, ?, ?, ?)",
                 role_rights,
             )
             conn.commit()
-            logger.info("Role rights: %d entries from %d roles",
-                       len(role_rights), len(set(r[0] for r in role_rights)))
+            logger.info("Role rights: %d entries from %d roles", len(role_rights), len(set(r[0] for r in role_rights)))
 
         # Level-4: file navigation index (.bsl/.mdo/.xml paths)
         file_paths_rows = _collect_file_paths(base_path)
@@ -1667,10 +1745,7 @@ class IndexBuilder:
 
         # FTS5 full-text search index for methods
         if build_fts:
-            conn.execute(
-                "CREATE VIRTUAL TABLE methods_fts USING fts5("
-                "name, object_name, tokenize='trigram')"
-            )
+            conn.execute("CREATE VIRTUAL TABLE methods_fts USING fts5(name, object_name, tokenize='trigram')")
             conn.execute(
                 "INSERT INTO methods_fts(rowid, name, object_name) "
                 "SELECT m.id, m.name, mod.object_name "
@@ -1682,8 +1757,7 @@ class IndexBuilder:
             synonyms = _collect_object_synonyms(base_path)
             if synonyms:
                 conn.executemany(
-                    "INSERT INTO object_synonyms (object_name, category, synonym, file) "
-                    "VALUES (?, ?, ?, ?)",
+                    "INSERT INTO object_synonyms (object_name, category, synonym, file) VALUES (?, ?, ?, ?)",
                     synonyms,
                 )
                 conn.commit()
@@ -1693,8 +1767,14 @@ class IndexBuilder:
         detected_prefixes = _detect_prefixes(conn)
 
         self._write_meta(
-            conn, base_path, total_files, paths_hash,
-            build_calls, build_metadata, config_meta, build_fts,
+            conn,
+            base_path,
+            total_files,
+            paths_hash,
+            build_calls,
+            build_metadata,
+            config_meta,
+            build_fts,
             detected_prefixes=detected_prefixes,
             file_paths_count=len(file_paths_rows),
             build_synonyms=build_synonyms,
@@ -1709,8 +1789,11 @@ class IndexBuilder:
         total_calls = sum(len(r.raw_calls) for r in results)
         logger.info(
             "Index built: %d modules, %d methods, %d calls in %.1fs (%.0f files/sec)",
-            len(results), total_methods, total_calls,
-            elapsed, total_files / elapsed if elapsed > 0 else 0,
+            len(results),
+            total_methods,
+            total_calls,
+            elapsed,
+            total_files / elapsed if elapsed > 0 else 0,
         )
 
         return db_path
@@ -1741,36 +1824,27 @@ class IndexBuilder:
         conn.execute("PRAGMA synchronous=NORMAL")
 
         # Read build settings from meta
-        meta_row = conn.execute(
-            "SELECT value FROM index_meta WHERE key = 'has_calls'"
-        ).fetchone()
+        meta_row = conn.execute("SELECT value FROM index_meta WHERE key = 'has_calls'").fetchone()
         build_calls = meta_row is not None and meta_row["value"] == "1"
 
-        meta_row = conn.execute(
-            "SELECT value FROM index_meta WHERE key = 'has_metadata'"
-        ).fetchone()
+        meta_row = conn.execute("SELECT value FROM index_meta WHERE key = 'has_metadata'").fetchone()
         has_metadata = meta_row is not None and meta_row["value"] == "1"
 
-        meta_row = conn.execute(
-            "SELECT value FROM index_meta WHERE key = 'has_fts'"
-        ).fetchone()
+        meta_row = conn.execute("SELECT value FROM index_meta WHERE key = 'has_fts'").fetchone()
         has_fts = meta_row is not None and meta_row["value"] == "1"
 
         # has_synonyms: default=True when key missing (v6→v7 migration)
-        meta_row = conn.execute(
-            "SELECT value FROM index_meta WHERE key = 'has_synonyms'"
-        ).fetchone()
+        meta_row = conn.execute("SELECT value FROM index_meta WHERE key = 'has_synonyms'").fetchone()
         has_synonyms = meta_row is None or meta_row["value"] == "1"
 
         # Schema upgrade v7→v8: regions/module_headers require full rebuild
-        meta_row = conn.execute(
-            "SELECT value FROM index_meta WHERE key = 'builder_version'"
-        ).fetchone()
+        meta_row = conn.execute("SELECT value FROM index_meta WHERE key = 'builder_version'").fetchone()
         old_version = int(meta_row["value"]) if meta_row else 0
         if old_version < 8:
             logger.info(
                 "Upgrading index v%d → v%d: full rebuild required for regions/module_headers",
-                old_version, BUILDER_VERSION,
+                old_version,
+                BUILDER_VERSION,
             )
             conn.close()
             db_path = self.build(
@@ -1820,7 +1894,9 @@ class IndexBuilder:
 
         logger.info(
             "Incremental update: %d added, %d changed, %d removed",
-            len(added_paths), len(changed_paths), len(removed_paths),
+            len(added_paths),
+            len(changed_paths),
+            len(removed_paths),
         )
 
         bsl_changed = bool(to_remove or to_add)
@@ -1833,7 +1909,10 @@ class IndexBuilder:
                 with ThreadPoolExecutor(max_workers=workers) as pool:
                     futures = {
                         pool.submit(
-                            _process_single_file, disk_files[rel], base_path, build_calls,
+                            _process_single_file,
+                            disk_files[rel],
+                            base_path,
+                            build_calls,
                         ): rel
                         for rel in to_add
                         if rel in disk_files
@@ -1852,10 +1931,7 @@ class IndexBuilder:
                             continue
                         mod_id = mod_info["id"]
                         method_ids = [
-                            row[0]
-                            for row in conn.execute(
-                                "SELECT id FROM methods WHERE module_id = ?", (mod_id,)
-                            )
+                            row[0] for row in conn.execute("SELECT id FROM methods WHERE module_id = ?", (mod_id,))
                         ]
                         if method_ids:
                             placeholders = ",".join("?" * len(method_ids))
@@ -2008,8 +2084,7 @@ class IndexBuilder:
             synonyms = _collect_object_synonyms(base_path)
             if synonyms:
                 conn.executemany(
-                    "INSERT INTO object_synonyms (object_name, category, synonym, file) "
-                    "VALUES (?, ?, ?, ?)",
+                    "INSERT INTO object_synonyms (object_name, category, synonym, file) VALUES (?, ?, ?, ?)",
                     synonyms,
                 )
             conn.execute(
@@ -2028,8 +2103,7 @@ class IndexBuilder:
         role_rights = _collect_role_rights(base_path)
         if role_rights:
             conn.executemany(
-                "INSERT INTO role_rights (role_name, object_name, right_name, file) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO role_rights (role_name, object_name, right_name, file) VALUES (?, ?, ?, ?)",
                 role_rights,
             )
 
@@ -2094,16 +2168,18 @@ class IndexBuilder:
         """Insert modules, methods, and calls in batch."""
         module_rows: list[tuple] = []
         for r in results:
-            module_rows.append((
-                r.info.relative_path,
-                r.info.category,
-                r.info.object_name,
-                r.info.module_type,
-                r.info.form_name,
-                1 if r.info.is_form_module else 0,
-                r.mtime,
-                r.size,
-            ))
+            module_rows.append(
+                (
+                    r.info.relative_path,
+                    r.info.category,
+                    r.info.object_name,
+                    r.info.module_type,
+                    r.info.form_name,
+                    1 if r.info.is_form_module else 0,
+                    r.mtime,
+                    r.size,
+                )
+            )
 
         conn.executemany(
             "INSERT OR REPLACE INTO modules "
@@ -2137,16 +2213,18 @@ class IndexBuilder:
             if mod_id is None:
                 continue
             for method in r.methods:
-                method_rows.append((
-                    mod_id,
-                    method["name"],
-                    method["type"],
-                    1 if method["is_export"] else 0,
-                    method["params"],
-                    method["line"],
-                    method["end_line"],
-                    method.get("loc"),
-                ))
+                method_rows.append(
+                    (
+                        mod_id,
+                        method["name"],
+                        method["type"],
+                        1 if method["is_export"] else 0,
+                        method["params"],
+                        method["line"],
+                        method["end_line"],
+                        method.get("loc"),
+                    )
+                )
             if build_calls:
                 for method_idx, callee_name, call_line in r.raw_calls:
                     call_pending.append((r.info.relative_path, method_idx, callee_name, call_line))
@@ -2201,14 +2279,12 @@ class IndexBuilder:
 
         if region_rows:
             conn.executemany(
-                "INSERT INTO regions (module_id, name, line, end_line) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO regions (module_id, name, line, end_line) VALUES (?, ?, ?, ?)",
                 region_rows,
             )
         if header_rows:
             conn.executemany(
-                "INSERT OR REPLACE INTO module_headers (module_id, header_comment) "
-                "VALUES (?, ?)",
+                "INSERT OR REPLACE INTO module_headers (module_id, header_comment) VALUES (?, ?)",
                 header_rows,
             )
 
@@ -2247,9 +2323,15 @@ class IndexBuilder:
 
         # Detected custom prefixes
         if detected_prefixes:
-            meta_entries.append(("detected_prefixes", json.dumps(
-                detected_prefixes, ensure_ascii=False,
-            )))
+            meta_entries.append(
+                (
+                    "detected_prefixes",
+                    json.dumps(
+                        detected_prefixes,
+                        ensure_ascii=False,
+                    ),
+                )
+            )
 
         conn.executemany(
             "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
@@ -2373,15 +2455,12 @@ class IndexReader:
             if the module is not in the index.
         """
         with self._lock:
-            mod_row = self._conn.execute(
-                "SELECT id FROM modules WHERE rel_path = ?", (rel_path,)
-            ).fetchone()
+            mod_row = self._conn.execute("SELECT id FROM modules WHERE rel_path = ?", (rel_path,)).fetchone()
             if mod_row is None:
                 return None
 
             rows = self._conn.execute(
-                "SELECT name, type, line, end_line, is_export, params "
-                "FROM methods WHERE module_id = ? ORDER BY line",
+                "SELECT name, type, line, end_line, is_export, params FROM methods WHERE module_id = ? ORDER BY line",
                 (mod_row["id"],),
             ).fetchall()
 
@@ -2416,9 +2495,7 @@ class IndexReader:
         """
         with self._lock:
             try:
-                count_row = self._conn.execute(
-                    "SELECT COUNT(*) AS cnt FROM calls"
-                ).fetchone()
+                count_row = self._conn.execute("SELECT COUNT(*) AS cnt FROM calls").fetchone()
                 if count_row is None or count_row["cnt"] == 0:
                     return None
             except sqlite3.Error:
@@ -2441,8 +2518,6 @@ class IndexReader:
                 JOIN modules mod ON mod.id = m.module_id
                 WHERE c.callee_name LIKE ? ESCAPE '\\'
             """
-            params: list = [proc_name]  # exact match first
-
             # Try exact match (case-insensitive via COLLATE on index)
             # Also search for qualified variants: *.proc_name
             escaped_name = proc_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -2498,7 +2573,11 @@ class IndexReader:
 
             logger.debug(
                 "get_callers: proc=%s count_time=%.2fs rows_time=%.2fs total=%d returned=%d",
-                proc_name, _t_count, _t_rows, total_callers, len(rows),
+                proc_name,
+                _t_count,
+                _t_rows,
+                total_callers,
+                len(rows),
             )
 
             callers = [
@@ -2532,9 +2611,7 @@ class IndexReader:
             if the module is not in the index.
         """
         with self._lock:
-            mod_row = self._conn.execute(
-                "SELECT id FROM modules WHERE rel_path = ?", (rel_path,)
-            ).fetchone()
+            mod_row = self._conn.execute("SELECT id FROM modules WHERE rel_path = ?", (rel_path,)).fetchone()
             if mod_row is None:
                 return None
 
@@ -2572,18 +2649,13 @@ class IndexReader:
 
             if not rows:
                 try:
-                    cnt = self._conn.execute(
-                        "SELECT COUNT(*) AS cnt FROM register_movements"
-                    ).fetchone()
+                    cnt = self._conn.execute("SELECT COUNT(*) AS cnt FROM register_movements").fetchone()
                     if cnt and cnt["cnt"] == 0:
                         return None
                 except sqlite3.Error:
                     return None
 
-            return [
-                {"register_name": r["register_name"], "source": r["source"], "file": r["file"]}
-                for r in rows
-            ]
+            return [{"register_name": r["register_name"], "source": r["source"], "file": r["file"]} for r in rows]
 
     def get_register_writers(self, register_name: str) -> list[dict] | None:
         """Get documents that write to a given register.
@@ -2593,8 +2665,7 @@ class IndexReader:
         with self._lock:
             try:
                 rows = self._conn.execute(
-                    "SELECT document_name, source, file "
-                    "FROM register_movements WHERE register_name = ? COLLATE NOCASE",
+                    "SELECT document_name, source, file FROM register_movements WHERE register_name = ? COLLATE NOCASE",
                     (register_name,),
                 ).fetchall()
             except sqlite3.OperationalError:
@@ -2602,18 +2673,13 @@ class IndexReader:
 
             if not rows:
                 try:
-                    cnt = self._conn.execute(
-                        "SELECT COUNT(*) AS cnt FROM register_movements"
-                    ).fetchone()
+                    cnt = self._conn.execute("SELECT COUNT(*) AS cnt FROM register_movements").fetchone()
                     if cnt and cnt["cnt"] == 0:
                         return None
                 except sqlite3.Error:
                     return None
 
-            return [
-                {"document_name": r["document_name"], "source": r["source"], "file": r["file"]}
-                for r in rows
-            ]
+            return [{"document_name": r["document_name"], "source": r["source"], "file": r["file"]} for r in rows]
 
     def get_roles(self, object_name: str) -> list[dict] | None:
         """Get roles that grant rights to a given object.
@@ -2624,8 +2690,7 @@ class IndexReader:
         with self._lock:
             try:
                 rows = self._conn.execute(
-                    "SELECT role_name, object_name, right_name, file "
-                    "FROM role_rights WHERE object_name LIKE ?",
+                    "SELECT role_name, object_name, right_name, file FROM role_rights WHERE object_name LIKE ?",
                     (f"%{object_name}%",),
                 ).fetchall()
             except sqlite3.OperationalError:
@@ -2634,9 +2699,7 @@ class IndexReader:
             if not rows:
                 # Check if the table has any data at all
                 try:
-                    cnt = self._conn.execute(
-                        "SELECT COUNT(*) AS cnt FROM role_rights"
-                    ).fetchone()
+                    cnt = self._conn.execute("SELECT COUNT(*) AS cnt FROM role_rights").fetchone()
                     if cnt and cnt["cnt"] == 0:
                         return None
                 except sqlite3.Error:
@@ -2669,9 +2732,7 @@ class IndexReader:
         """
         with self._lock:
             try:
-                rows = self._conn.execute(
-                    "SELECT name, synonym, values_json, source_file FROM enum_values"
-                ).fetchall()
+                rows = self._conn.execute("SELECT name, synonym, values_json, source_file FROM enum_values").fetchall()
             except sqlite3.OperationalError:
                 return None
 
@@ -2706,12 +2767,16 @@ class IndexReader:
         with self._lock:
             meta: dict[str, str | None] = {}
             required_keys = ("source_format", "shallow_bsl_count")
-            for key in ("source_format", "shallow_bsl_count", "config_role",
-                         "config_name", "extension_prefix", "extension_purpose",
-                         "has_configuration_xml"):
-                row = self._conn.execute(
-                    "SELECT value FROM index_meta WHERE key = ?", (key,)
-                ).fetchone()
+            for key in (
+                "source_format",
+                "shallow_bsl_count",
+                "config_role",
+                "config_name",
+                "extension_prefix",
+                "extension_purpose",
+                "has_configuration_xml",
+            ):
+                row = self._conn.execute("SELECT value FROM index_meta WHERE key = ?", (key,)).fetchone()
                 meta[key] = row["value"] if row else None
 
             # Required keys must be present
@@ -2723,9 +2788,7 @@ class IndexReader:
     def get_detected_prefixes(self) -> list[str]:
         """Return detected custom prefixes from index_meta, or empty list."""
         with self._lock:
-            row = self._conn.execute(
-                "SELECT value FROM index_meta WHERE key = 'detected_prefixes'"
-            ).fetchone()
+            row = self._conn.execute("SELECT value FROM index_meta WHERE key = 'detected_prefixes'").fetchone()
             if row and row["value"]:
                 try:
                     return json.loads(row["value"])
@@ -2741,8 +2804,7 @@ class IndexReader:
         """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT rel_path, category, object_name, module_type, form_name "
-                "FROM modules"
+                "SELECT rel_path, category, object_name, module_type, form_name FROM modules"
             ).fetchall()
             return [
                 {
@@ -2763,9 +2825,7 @@ class IndexReader:
         """Check if file_paths table exists and has data."""
         with self._lock:
             try:
-                row = self._conn.execute(
-                    "SELECT COUNT(*) AS cnt FROM file_paths"
-                ).fetchone()
+                row = self._conn.execute("SELECT COUNT(*) AS cnt FROM file_paths").fetchone()
                 return row is not None and row["cnt"] > 0
             except sqlite3.OperationalError:
                 return False
@@ -2784,24 +2844,20 @@ class IndexReader:
             try:
                 if kind == "by_extension":
                     rows = self._conn.execute(
-                        "SELECT rel_path FROM file_paths WHERE extension = ? "
-                        "ORDER BY rel_path",
+                        "SELECT rel_path FROM file_paths WHERE extension = ? ORDER BY rel_path",
                         (params["ext"],),
                     ).fetchall()
                 elif kind == "under_prefix":
                     prefix = params["prefix"]
                     rows = self._conn.execute(
-                        "SELECT rel_path FROM file_paths WHERE rel_path LIKE ? "
-                        "ORDER BY rel_path",
+                        "SELECT rel_path FROM file_paths WHERE rel_path LIKE ? ORDER BY rel_path",
                         (prefix + "/%",),
                     ).fetchall()
                 elif kind == "dir_file":
                     dir_pat = params["dir"]
                     fname = params["file"]
                     rows = self._conn.execute(
-                        "SELECT rel_path FROM file_paths "
-                        "WHERE dir_path LIKE ? AND filename = ? "
-                        "ORDER BY rel_path",
+                        "SELECT rel_path FROM file_paths WHERE dir_path LIKE ? AND filename = ? ORDER BY rel_path",
                         (dir_pat + "/%", fname),
                     ).fetchall()
                 elif kind == "exact":
@@ -2813,18 +2869,14 @@ class IndexReader:
                     prefix = params["prefix"]
                     ext = params["ext"]
                     rows = self._conn.execute(
-                        "SELECT rel_path FROM file_paths "
-                        "WHERE rel_path LIKE ? AND extension = ? "
-                        "ORDER BY rel_path",
+                        "SELECT rel_path FROM file_paths WHERE rel_path LIKE ? AND extension = ? ORDER BY rel_path",
                         (prefix + "/%", ext),
                     ).fetchall()
                 elif kind == "under_prefix_ext":
                     dir_name = params["dir_name"]
                     ext = params["ext"]
                     rows = self._conn.execute(
-                        "SELECT rel_path FROM file_paths "
-                        "WHERE dir_path LIKE ? AND extension = ? "
-                        "ORDER BY rel_path",
+                        "SELECT rel_path FROM file_paths WHERE dir_path LIKE ? AND extension = ? ORDER BY rel_path",
                         (f"%/{dir_name}/%", ext),
                     ).fetchall()
                 elif kind == "name_wildcard":
@@ -2832,16 +2884,12 @@ class IndexReader:
                     ext = params.get("ext", "")
                     if ext:
                         rows = self._conn.execute(
-                            "SELECT rel_path FROM file_paths "
-                            "WHERE filename LIKE ? AND extension = ? "
-                            "ORDER BY rel_path",
+                            "SELECT rel_path FROM file_paths WHERE filename LIKE ? AND extension = ? ORDER BY rel_path",
                             (name_prefix + "%", ext),
                         ).fetchall()
                     else:
                         rows = self._conn.execute(
-                            "SELECT rel_path FROM file_paths "
-                            "WHERE filename LIKE ? "
-                            "ORDER BY rel_path",
+                            "SELECT rel_path FROM file_paths WHERE filename LIKE ? ORDER BY rel_path",
                             (name_prefix + "%",),
                         ).fetchall()
                 else:
@@ -2867,16 +2915,12 @@ class IndexReader:
                     prefix = prefix.replace("\\", "/").strip("/")
                     base_depth = prefix.count("/") + 1
                     rows = self._conn.execute(
-                        "SELECT rel_path FROM file_paths "
-                        "WHERE rel_path LIKE ? AND depth <= ? "
-                        "ORDER BY rel_path",
+                        "SELECT rel_path FROM file_paths WHERE rel_path LIKE ? AND depth <= ? ORDER BY rel_path",
                         (prefix + "/%", base_depth + max_depth),
                     ).fetchall()
                 else:
                     rows = self._conn.execute(
-                        "SELECT rel_path FROM file_paths "
-                        "WHERE depth <= ? "
-                        "ORDER BY rel_path",
+                        "SELECT rel_path FROM file_paths WHERE depth <= ? ORDER BY rel_path",
                         (max_depth,),
                     ).fetchall()
             except sqlite3.OperationalError:
@@ -2953,25 +2997,27 @@ class IndexReader:
             except sqlite3.Error:
                 stats["calls"] = 0
 
-            row = self._conn.execute(
-                "SELECT COUNT(*) AS cnt FROM methods WHERE is_export = 1"
-            ).fetchone()
+            row = self._conn.execute("SELECT COUNT(*) AS cnt FROM methods WHERE is_export = 1").fetchone()
             stats["exports"] = row["cnt"] if row else 0
 
             # built_at from meta
-            meta_row = self._conn.execute(
-                "SELECT value FROM index_meta WHERE key = 'built_at'"
-            ).fetchone()
+            meta_row = self._conn.execute("SELECT value FROM index_meta WHERE key = 'built_at'").fetchone()
             stats["built_at"] = float(meta_row["value"]) if meta_row else None
 
             # Configuration metadata from index_meta
-            for key in ("config_name", "config_version", "config_synonym",
-                        "config_vendor", "source_format", "config_role",
-                        "has_metadata", "has_fts", "bsl_count",
-                        "builder_version"):
-                meta_row = self._conn.execute(
-                    "SELECT value FROM index_meta WHERE key = ?", (key,)
-                ).fetchone()
+            for key in (
+                "config_name",
+                "config_version",
+                "config_synonym",
+                "config_vendor",
+                "source_format",
+                "config_role",
+                "has_metadata",
+                "has_fts",
+                "bsl_count",
+                "builder_version",
+            ):
+                meta_row = self._conn.execute("SELECT value FROM index_meta WHERE key = ?", (key,)).fetchone()
                 stats[key] = meta_row["value"] if meta_row else None
 
             # Convert stringly-typed flags to proper booleans
@@ -3035,9 +3081,7 @@ class IndexReader:
         """Check if the FTS5 full-text search index exists."""
         with self._lock:
             try:
-                row = self._conn.execute(
-                    "SELECT COUNT(*) AS cnt FROM methods_fts"
-                ).fetchone()
+                row = self._conn.execute("SELECT COUNT(*) AS cnt FROM methods_fts").fetchone()
                 return row is not None and row["cnt"] > 0
             except sqlite3.OperationalError:
                 return False
@@ -3130,8 +3174,12 @@ class IndexReader:
 
                 if not query or not query.strip():
                     return [
-                        {"object_name": r["object_name"], "category": r["category"],
-                         "synonym": r["synonym"], "file": r["file"]}
+                        {
+                            "object_name": r["object_name"],
+                            "category": r["category"],
+                            "synonym": r["synonym"],
+                            "file": r["file"],
+                        }
                         for r in rows
                     ]
 
@@ -3139,8 +3187,12 @@ class IndexReader:
                 q_lower = query.strip().lower()
                 ranked: list[tuple[int, str, str, dict]] = []
                 for r in rows:
-                    d = {"object_name": r["object_name"], "category": r["category"],
-                         "synonym": r["synonym"], "file": r["file"]}
+                    d = {
+                        "object_name": r["object_name"],
+                        "category": r["category"],
+                        "synonym": r["synonym"],
+                        "file": r["file"],
+                    }
                     name_lower = r["object_name"].lower()
                     synonym_lower = r["synonym"].lower()
 
@@ -3148,7 +3200,11 @@ class IndexReader:
                         rank = 0  # exact object_name
                     elif name_lower.startswith(q_lower):
                         rank = 1  # prefix object_name
-                    elif q_lower in synonym_lower.split(": ", 1)[-1] if ": " in synonym_lower else q_lower in synonym_lower:
+                    elif (
+                        q_lower in synonym_lower.split(": ", 1)[-1]
+                        if ": " in synonym_lower
+                        else q_lower in synonym_lower
+                    ):
                         rank = 2  # substring in raw synonym (after prefix)
                     else:
                         rank = 3  # substring in category prefix
@@ -3241,7 +3297,9 @@ class IndexReader:
                 return None
 
     def get_event_subscriptions(
-        self, object_name: str = "", custom_only: bool = False,
+        self,
+        object_name: str = "",
+        custom_only: bool = False,
     ) -> list[dict] | None:
         """Get event subscriptions from the index, optionally filtered.
 
@@ -3277,10 +3335,7 @@ class IndexReader:
 
                 handler_module = r["handler_module"] or ""
                 handler_procedure = r["handler_procedure"] or ""
-                handler = (
-                    f"CommonModule.{handler_module}.{handler_procedure}"
-                    if handler_module else handler_procedure
-                )
+                handler = f"CommonModule.{handler_module}.{handler_procedure}" if handler_module else handler_procedure
 
                 entry = {
                     "name": r["name"],
@@ -3361,8 +3416,7 @@ class IndexReader:
         with self._lock:
             try:
                 rows = self._conn.execute(
-                    "SELECT name, synonym, location, content, file "
-                    "FROM functional_options"
+                    "SELECT name, synonym, location, content, file FROM functional_options"
                 ).fetchall()
             except sqlite3.OperationalError:
                 return None
@@ -3419,7 +3473,6 @@ class IndexReader:
                 return []  # Table exists but no matches — don't fallback
 
             # Group by subsystem
-            from collections import defaultdict
 
             grouped: dict[str, dict] = {}
             for r in rows:

@@ -16,9 +16,7 @@ from rlm_tools_bsl.llm_bridge import (
 
 def test_llm_query_calls_anthropic():
     mock_client = MagicMock()
-    mock_client.messages.create.return_value = MagicMock(
-        content=[MagicMock(text="YES - handles errors properly")]
-    )
+    mock_client.messages.create.return_value = MagicMock(content=[MagicMock(text="YES - handles errors properly")])
 
     query_fn = make_llm_query(client=mock_client, model="claude-haiku-4-5-20251001")
     result = query_fn("Does this handle errors?", context="some code here")
@@ -29,9 +27,7 @@ def test_llm_query_calls_anthropic():
 
 def test_llm_query_without_context():
     mock_client = MagicMock()
-    mock_client.messages.create.return_value = MagicMock(
-        content=[MagicMock(text="42")]
-    )
+    mock_client.messages.create.return_value = MagicMock(content=[MagicMock(text="42")])
 
     query_fn = make_llm_query(client=mock_client, model="claude-haiku-4-5-20251001")
     result = query_fn("What is the answer?")
@@ -45,9 +41,7 @@ def test_llm_query_without_context():
 
 def test_llm_query_batched():
     mock_client = MagicMock()
-    mock_client.messages.create.return_value = MagicMock(
-        content=[MagicMock(text="answer")]
-    )
+    mock_client.messages.create.return_value = MagicMock(content=[MagicMock(text="answer")])
 
     query_fn = make_llm_query(client=mock_client, model="claude-haiku-4-5-20251001")
     batch_fn = make_llm_query_batched(query_fn)
@@ -87,9 +81,7 @@ def test_openai_query_calls_openai():
 
 def test_openai_query_without_context():
     mock_module, mock_client = _mock_openai_module()
-    mock_client.chat.completions.create.return_value = MagicMock(
-        choices=[MagicMock(message=MagicMock(content="42"))]
-    )
+    mock_client.chat.completions.create.return_value = MagicMock(choices=[MagicMock(message=MagicMock(content="42"))])
 
     with patch.dict(sys.modules, {"openai": mock_module}):
         query_fn = _make_openai_query("http://x", "key", "model")
@@ -134,8 +126,11 @@ def test_openai_batched():
 def _clean_llm_env(env_dict):
     """Helper: remove all LLM-related env vars, then set given ones."""
     keys_to_clear = [
-        "RLM_LLM_BASE_URL", "RLM_LLM_API_KEY", "RLM_LLM_MODEL",
-        "ANTHROPIC_API_KEY", "RLM_SUB_MODEL",
+        "RLM_LLM_BASE_URL",
+        "RLM_LLM_API_KEY",
+        "RLM_LLM_MODEL",
+        "ANTHROPIC_API_KEY",
+        "RLM_SUB_MODEL",
     ]
     cleaned = {k: v for k, v in os.environ.items() if k not in keys_to_clear}
     cleaned.update(env_dict)
@@ -147,14 +142,15 @@ def test_provider_priority_openai_over_anthropic():
     mock_client.chat.completions.create.return_value = MagicMock(
         choices=[MagicMock(message=MagicMock(content="openai-response"))]
     )
-    env = _clean_llm_env({
-        "RLM_LLM_BASE_URL": "http://localhost:11434/v1",
-        "RLM_LLM_API_KEY": "test",
-        "RLM_LLM_MODEL": "qwen2.5:7b",
-        "ANTHROPIC_API_KEY": "sk-ant-test",
-    })
-    with patch.dict(os.environ, env, clear=True), \
-         patch.dict(sys.modules, {"openai": mock_module}):
+    env = _clean_llm_env(
+        {
+            "RLM_LLM_BASE_URL": "http://localhost:11434/v1",
+            "RLM_LLM_API_KEY": "test",
+            "RLM_LLM_MODEL": "qwen2.5:7b",
+            "ANTHROPIC_API_KEY": "sk-ant-test",
+        }
+    )
+    with patch.dict(os.environ, env, clear=True), patch.dict(sys.modules, {"openai": mock_module}):
         fn = get_llm_query_fn()
         assert fn is not None
         result = fn("test")
@@ -164,13 +160,10 @@ def test_provider_priority_openai_over_anthropic():
 
 def test_provider_fallback_to_anthropic():
     env = _clean_llm_env({"ANTHROPIC_API_KEY": "sk-ant-test"})
-    with patch.dict(os.environ, env, clear=True), \
-         patch("rlm_tools_bsl.llm_bridge.Anthropic") as MockAnthropic:
+    with patch.dict(os.environ, env, clear=True), patch("rlm_tools_bsl.llm_bridge.Anthropic") as MockAnthropic:
         mock_client = MagicMock()
         MockAnthropic.return_value = mock_client
-        mock_client.messages.create.return_value = MagicMock(
-            content=[MagicMock(text="anthropic-response")]
-        )
+        mock_client.messages.create.return_value = MagicMock(content=[MagicMock(text="anthropic-response")])
 
         fn = get_llm_query_fn()
         assert fn is not None
@@ -207,9 +200,7 @@ def test_anthropic_empty_response():
 
 def test_openai_none_content():
     mock_module, mock_client = _mock_openai_module()
-    mock_client.chat.completions.create.return_value = MagicMock(
-        choices=[MagicMock(message=MagicMock(content=None))]
-    )
+    mock_client.chat.completions.create.return_value = MagicMock(choices=[MagicMock(message=MagicMock(content=None))])
 
     with patch.dict(sys.modules, {"openai": mock_module}):
         query_fn = _make_openai_query("http://x", "key", "model")

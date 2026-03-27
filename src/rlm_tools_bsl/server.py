@@ -27,8 +27,6 @@ from rlm_tools_bsl.extension_detector import (
 )
 from rlm_tools_bsl.bsl_knowledge import (
     EFFORT_LEVELS,
-    RLM_EXECUTE_DESCRIPTION,
-    RLM_START_DESCRIPTION,
     get_strategy,
 )
 from rlm_tools_bsl.bsl_index import (
@@ -58,13 +56,13 @@ _sandboxes_lock = threading.Lock()
 @mcp.custom_route("/health", methods=["GET"])
 async def _health_endpoint(request):  # type: ignore[no-untyped-def]
     from starlette.responses import JSONResponse
+
     return JSONResponse({"status": "ok"})
 
 
 from rlm_tools_bsl.helpers import _SKIP_DIRS, _BINARY_EXTENSIONS
 
 _MAX_OVERRIDES_IN_RESPONSE = 100
-
 
 
 def _auto_scan_overrides(ext_context) -> dict[str, list[dict]]:
@@ -103,10 +101,7 @@ def _scan_metadata(path: str) -> dict:
     sample_budget = 500
 
     for dirpath, dirnames, filenames in os.walk(path):
-        dirnames[:] = [
-            d for d in dirnames
-            if d not in _SKIP_DIRS and not d.startswith(".")
-        ]
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
 
         for fname in filenames:
             if fname.startswith("."):
@@ -172,9 +167,7 @@ def _resolve_mapped_drive(path: str) -> str | None:
             if sid.startswith(".") or sid.endswith("_Classes"):
                 continue
             try:
-                with winreg.OpenKey(
-                    winreg.HKEY_USERS, f"{sid}\\Network\\{drive_letter}"
-                ) as key:
+                with winreg.OpenKey(winreg.HKEY_USERS, f"{sid}\\Network\\{drive_letter}") as key:
                     remote_path, _ = winreg.QueryValueEx(key, "RemotePath")
                     if remote_path:
                         return remote_path + path[2:]
@@ -200,8 +193,7 @@ def _install_session_llm_tools(session, sandbox: Sandbox) -> bool:
             with lock:
                 if session.llm_calls_used + count > session.max_llm_calls:
                     raise RuntimeError(
-                        "LLM call limit exceeded: "
-                        f"{session.llm_calls_used} + {count} > {session.max_llm_calls}"
+                        f"LLM call limit exceeded: {session.llm_calls_used} + {count} > {session.max_llm_calls}"
                     )
                 session.llm_calls_used += count
 
@@ -293,7 +285,9 @@ def _rlm_start(
                 idx_status = check_index_usable(db_path, resolved)
                 logger.info(
                     "rlm_start: session=%s index status=%s db=%s",
-                    session_id, idx_status.value, db_path,
+                    session_id,
+                    idx_status.value,
+                    db_path,
                 )
 
                 if idx_status in (IndexStatus.FRESH, IndexStatus.STALE_AGE, IndexStatus.STALE_CONTENT):
@@ -314,7 +308,7 @@ def _rlm_start(
                     if idx_version < BUILDER_VERSION:
                         msg = (
                             f"Index built with v{idx_version}, current v{BUILDER_VERSION} — "
-                            f"new helpers available after rebuild: rlm-bsl-index index build \"{resolved}\""
+                            f'new helpers available after rebuild: rlm-bsl-index index build "{resolved}"'
                         )
                         idx_warnings.append(msg)
                         logger.warning("rlm_start: session=%s %s", session_id, msg)
@@ -401,7 +395,9 @@ def _rlm_start(
 
         logger.info(
             "rlm_start: session=%s format=%s bsl_files=%d config_role=%s overrides=%d",
-            session_id, format_info.format_label, format_info.bsl_file_count,
+            session_id,
+            format_info.format_label,
+            format_info.bsl_file_count,
             ext_context.current.role.value,
             sum(len(v) for v in ext_overrides.values()),
         )
@@ -411,11 +407,7 @@ def _rlm_start(
             threading.Thread(target=warmup_openai_import, daemon=True).start()
 
         # Determine if index is authoritative for zero-callers results
-        _callers_authoritative = (
-            idx_status == IndexStatus.FRESH
-            and idx_reader is not None
-            and idx_reader.has_calls
-        )
+        _callers_authoritative = idx_status == IndexStatus.FRESH and idx_reader is not None and idx_reader.has_calls
 
         t_step = time.monotonic()
         sandbox = Sandbox(
@@ -428,7 +420,12 @@ def _rlm_start(
         )
         has_llm_tools = _install_session_llm_tools(session, sandbox)
         t_sandbox = time.monotonic() - t_step
-        logger.info("rlm_start: session=%s sandbox ready, llm_tools=%s index=%s", session_id, has_llm_tools, idx_reader is not None)
+        logger.info(
+            "rlm_start: session=%s sandbox ready, llm_tools=%s index=%s",
+            session_id,
+            has_llm_tools,
+            idx_reader is not None,
+        )
 
         # Auto-detect custom prefixes — fast path from index, fallback to glob scan
         t_step = time.monotonic()
@@ -455,8 +452,14 @@ def _rlm_start(
         bsl_registry = sandbox._namespace.get("_registry") or {}
         t_step = time.monotonic()
         strategy = get_strategy(
-            effort, format_info, detected_prefixes, ext_context, ext_overrides,
-            registry=bsl_registry, idx_stats=idx_stats, idx_warnings=idx_warnings,
+            effort,
+            format_info,
+            detected_prefixes,
+            ext_context,
+            ext_overrides,
+            registry=bsl_registry,
+            idx_stats=idx_stats,
+            idx_warnings=idx_warnings,
             query=query,
         )
         t_strategy = time.monotonic() - t_step
@@ -475,21 +478,25 @@ def _rlm_start(
 
     # Build available_functions from registry (BSL helpers) + static IO helpers
     available_functions = [entry["sig"] for entry in bsl_registry.values()]
-    available_functions.extend([
-        "read_file(path) -> str",
-        "read_files(paths) -> dict[path, content]",
-        "grep(pattern, path='.') -> list[dict] keys: file, line, text",
-        "grep_summary(pattern, path='.') -> compact grouped string",
-        "grep_read(pattern, path='.', max_files=10, context_lines=0) -> {matches, files, summary}",
-        "glob_files(pattern) -> list[str]",
-        "tree(path='.', max_depth=3) -> str",
-        "find_files(name) -> list[str]",
-    ])
+    available_functions.extend(
+        [
+            "read_file(path) -> str",
+            "read_files(paths) -> dict[path, content]",
+            "grep(pattern, path='.') -> list[dict] keys: file, line, text",
+            "grep_summary(pattern, path='.') -> compact grouped string",
+            "grep_read(pattern, path='.', max_files=10, context_lines=0) -> {matches, files, summary}",
+            "glob_files(pattern) -> list[str]",
+            "tree(path='.', max_depth=3) -> str",
+            "find_files(name) -> list[str]",
+        ]
+    )
     if has_llm_tools:
-        available_functions.extend([
-            "llm_query(prompt, context='')",
-            "llm_query_batched(prompts, context='')",
-        ])
+        available_functions.extend(
+            [
+                "llm_query(prompt, context='')",
+                "llm_query_batched(prompts, context='')",
+            ]
+        )
 
     response: dict = {
         "session_id": session_id,
@@ -502,15 +509,19 @@ def _rlm_start(
             "current_purpose": ext_context.current.purpose or None,
             "current_prefix": ext_context.current.name_prefix or None,
             "nearby_extensions": [
-                {"name": e.name, "purpose": e.purpose,
-                 "prefix": e.name_prefix, "path": e.path,
-                 "overrides": ext_overrides.get(e.path, [])}
+                {
+                    "name": e.name,
+                    "purpose": e.purpose,
+                    "prefix": e.name_prefix,
+                    "path": e.path,
+                    "overrides": ext_overrides.get(e.path, []),
+                }
                 for e in ext_context.nearby_extensions
             ],
             "nearby_main": (
-                {"name": ext_context.nearby_main.name,
-                 "path": ext_context.nearby_main.path}
-                if ext_context.nearby_main else None
+                {"name": ext_context.nearby_main.name, "path": ext_context.nearby_main.path}
+                if ext_context.nearby_main
+                else None
             ),
             "own_overrides": ext_overrides.get("self", []) if ext_context.current.role.value == "extension" else None,
         },
@@ -536,18 +547,31 @@ def _rlm_start(
     }
     logger.info(
         "rlm_start: session=%s timings: format=%.1fs ext=%.1fs overrides=%.1fs index=%.1fs sandbox=%.1fs prefixes=%.1fs strategy=%.1fs",
-        session_id, t_format, t_ext, t_overrides, t_index, t_sandbox, t_prefixes, t_strategy,
+        session_id,
+        t_format,
+        t_ext,
+        t_overrides,
+        t_index,
+        t_sandbox,
+        t_prefixes,
+        t_strategy,
     )
     logger.info(
         "rlm_start: session=%s sources: format=%s ext=%s prefixes=%s",
-        session_id, src_format, src_ext, src_prefixes,
+        session_id,
+        src_format,
+        src_ext,
+        src_prefixes,
     )
     result_json = json.dumps(response, ensure_ascii=False)
     out_chars = len(result_json)
     session.total_out_chars += out_chars
     logger.info(
         "rlm_start: session=%s completed in %.2fs out_chars=%d out_tokens~%d",
-        session_id, time.monotonic() - t0, out_chars, int(out_chars / 1.75),
+        session_id,
+        time.monotonic() - t0,
+        out_chars,
+        int(out_chars / 1.75),
     )
     return result_json
 
@@ -559,8 +583,7 @@ def _format_helper_summary(helper_calls: list[HelperCall], threshold: float) -> 
         if h.elapsed >= threshold:
             grouped.setdefault(h.name, []).append(h.elapsed)
     parts = ", ".join(
-        f"{name}({times[0]:.1f}s)" if len(times) == 1
-        else f"{name}({len(times)}\u00d7, total={sum(times):.1f}s)"
+        f"{name}({times[0]:.1f}s)" if len(times) == 1 else f"{name}({len(times)}\u00d7, total={sum(times):.1f}s)"
         for name, times in grouped.items()
     )
     return parts, len(grouped)
@@ -585,12 +608,10 @@ def _rlm_execute(
         return json.dumps({"error": f"Sandbox not found for session '{session_id}'"}, ensure_ascii=False)
 
     if session.execute_calls >= session.max_execute_calls:
-        return json.dumps({
-            "error": (
-                "Execution call limit exceeded: "
-                f"{session.execute_calls} >= {session.max_execute_calls}"
-            )
-        }, ensure_ascii=False)
+        return json.dumps(
+            {"error": (f"Execution call limit exceeded: {session.execute_calls} >= {session.max_execute_calls}")},
+            ensure_ascii=False,
+        )
 
     session.execute_calls += 1
     result = sandbox.execute(code)
@@ -627,16 +648,20 @@ def _rlm_execute(
         # Build excluded_vars from registry + static helpers
         bsl_reg = sandbox._namespace.get("_registry") or {}
         excluded_vars = set(bsl_reg.keys()) | {
-            "_detected_prefixes", "_registry",
-            "read_file", "read_files",
-            "grep", "grep_summary", "grep_read",
-            "glob_files", "tree", "find_files",
-            "llm_query", "llm_query_batched",
+            "_detected_prefixes",
+            "_registry",
+            "read_file",
+            "read_files",
+            "grep",
+            "grep_summary",
+            "grep_read",
+            "glob_files",
+            "tree",
+            "find_files",
+            "llm_query",
+            "llm_query_batched",
         }
-        new_vars = sorted(
-            v for v in (current_vars - previous_vars)
-            if v not in excluded_vars
-        )
+        new_vars = sorted(v for v in (current_vars - previous_vars) if v not in excluded_vars)
         session._last_reported_vars = current_vars
 
         response["variables"] = sorted(v for v in current_vars if v not in excluded_vars)
@@ -650,8 +675,14 @@ def _rlm_execute(
     session.total_out_chars += out_chars
     logger.info(
         "rlm_execute: session=%s call=%d/%d error=%s elapsed=%.2fs out_chars=%d out_tokens~%d%s",
-        session_id, session.execute_calls, session.max_execute_calls,
-        bool(result.error), elapsed, out_chars, int(out_chars / 1.75), helpers_summary,
+        session_id,
+        session.execute_calls,
+        session.max_execute_calls,
+        bool(result.error),
+        elapsed,
+        out_chars,
+        int(out_chars / 1.75),
+        helpers_summary,
     )
     return result_json
 
@@ -662,9 +693,12 @@ def _rlm_end(session_id: str) -> str:
         total_chars = session.total_in_chars + session.total_out_chars
         logger.info(
             "rlm_end: session=%s calls=%d in_chars=%d out_chars=%d total_chars=%d total_tokens~%d",
-            session_id, session.execute_calls,
-            session.total_in_chars, session.total_out_chars,
-            total_chars, int(total_chars / 1.75),
+            session_id,
+            session.execute_calls,
+            session.total_in_chars,
+            session.total_out_chars,
+            total_chars,
+            int(total_chars / 1.75),
         )
     else:
         logger.info("rlm_end: session=%s (not found)", session_id)
@@ -684,12 +718,30 @@ def _rlm_end(session_id: str) -> str:
 async def rlm_start(
     path: Annotated[str, Field(description="Absolute path to the 1C BSL codebase directory")],
     query: Annotated[str, Field(description="What you want to find or analyze in the BSL codebase")],
-    effort: Annotated[str, Field(description="Analysis depth: low (single quick lookup), medium (standard), high (deep trace, RECOMMENDED for multi-aspect analysis), max (exhaustive)")] = "high",
-    max_output_chars: Annotated[int, Field(description="Max characters per execute output", ge=100, le=100_000)] = 15_000,
-    max_llm_calls: Annotated[int | None, Field(description="Override max llm_query calls (default from effort level)")] = None,
-    max_execute_calls: Annotated[int | None, Field(description="Override max rlm_execute calls (default from effort level)")] = None,
-    execution_timeout_seconds: Annotated[int, Field(description="Per-rlm_execute timeout in seconds", ge=1, le=300)] = 45,
-    include_metadata: Annotated[bool, Field(description="Scan directory and include file counts/types in response (slow on large configs, disabled by default)")] = False,
+    effort: Annotated[
+        str,
+        Field(
+            description="Analysis depth: low (single quick lookup), medium (standard), high (deep trace, RECOMMENDED for multi-aspect analysis), max (exhaustive)"
+        ),
+    ] = "high",
+    max_output_chars: Annotated[
+        int, Field(description="Max characters per execute output", ge=100, le=100_000)
+    ] = 15_000,
+    max_llm_calls: Annotated[
+        int | None, Field(description="Override max llm_query calls (default from effort level)")
+    ] = None,
+    max_execute_calls: Annotated[
+        int | None, Field(description="Override max rlm_execute calls (default from effort level)")
+    ] = None,
+    execution_timeout_seconds: Annotated[
+        int, Field(description="Per-rlm_execute timeout in seconds", ge=1, le=300)
+    ] = 45,
+    include_metadata: Annotated[
+        bool,
+        Field(
+            description="Scan directory and include file counts/types in response (slow on large configs, disabled by default)"
+        ),
+    ] = False,
 ) -> str:
     """Start a BSL code exploration session on a 1C codebase. Returns JSON with session_id. Then call rlm_execute(session_id, code) where code is Python that calls helper functions and uses print() to output results. IMPORTANT: For large 1C configs (23K+ files), NEVER grep on broad paths -- use find_module() first."""
     return await anyio.to_thread.run_sync(
@@ -709,24 +761,33 @@ async def rlm_start(
 @mcp.tool()
 async def rlm_execute(
     session_id: Annotated[str, Field(description="Session ID from rlm_start")],
-    code: Annotated[str, Field(description=(
-        "Python code to execute. IMPORTANT: Batch multiple related operations into each call. "
-        "A good call does: grep -> read top matches -> extract patterns -> print summary. "
-        "A bad call does just one grep or one read_file. Variables persist between calls."
-    ))],
-    detail_level: Annotated[Literal["compact", "usage", "full"], Field(
-        description="Response payload level: compact=stdout+error, usage=add usage metrics, full=add variable details"
-    )] = "compact",
-    max_new_variables: Annotated[int, Field(
-        description="When detail_level=full, cap returned new_variables list to this size",
-        ge=1,
-        le=200,
-    )] = 20,
+    code: Annotated[
+        str,
+        Field(
+            description=(
+                "Python code to execute. IMPORTANT: Batch multiple related operations into each call. "
+                "A good call does: grep -> read top matches -> extract patterns -> print summary. "
+                "A bad call does just one grep or one read_file. Variables persist between calls."
+            )
+        ),
+    ],
+    detail_level: Annotated[
+        Literal["compact", "usage", "full"],
+        Field(
+            description="Response payload level: compact=stdout+error, usage=add usage metrics, full=add variable details"
+        ),
+    ] = "compact",
+    max_new_variables: Annotated[
+        int,
+        Field(
+            description="When detail_level=full, cap returned new_variables list to this size",
+            ge=1,
+            le=200,
+        ),
+    ] = 20,
 ) -> str:
     """Execute Python code in the BSL sandbox. The 'code' parameter is Python code. Call helper functions and use print() to see results. Variables persist between calls. Example: code="modules = find_module('MyModule')\\nfor m in modules:\\n    print(m['path'])". BSL helpers: help, find_module, find_by_type, extract_procedures, find_exports, safe_grep, read_procedure, find_callers, find_callers_context, parse_object_xml. Standard: read_file, read_files, grep, grep_summary, grep_read, glob_files, tree. CRITICAL: grep on path='.' ALWAYS times out on large 1C configs. Use find_module() first."""
-    return await anyio.to_thread.run_sync(
-        lambda: _rlm_execute(session_id, code, detail_level, max_new_variables)
-    )
+    return await anyio.to_thread.run_sync(lambda: _rlm_execute(session_id, code, detail_level, max_new_variables))
 
 
 @mcp.tool()
@@ -764,10 +825,12 @@ def _setup_file_logging():
         backupCount=3,
         encoding="utf-8",
     )
-    handler.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    ))
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
     logging.getLogger().addHandler(handler)
     logging.getLogger("uvicorn.access").addFilter(_HealthLogFilter())
     logger.info("File logging enabled: %s", log_path)
@@ -777,10 +840,11 @@ def _warmup_imports():
     """Pre-import heavy modules so first rlm_start is fast. Best-effort."""
     _t0 = time.monotonic()
     try:
-        import rlm_tools_bsl.bsl_helpers       # noqa: F401
-        import rlm_tools_bsl.bsl_xml_parsers   # noqa: F401
-        import rlm_tools_bsl.bsl_index         # noqa: F401
-        import rlm_tools_bsl.helpers           # noqa: F401
+        import rlm_tools_bsl.bsl_helpers  # noqa: F401
+        import rlm_tools_bsl.bsl_xml_parsers  # noqa: F401
+        import rlm_tools_bsl.bsl_index  # noqa: F401
+        import rlm_tools_bsl.helpers  # noqa: F401
+
         warmup_openai_import()
     except Exception:
         logger.debug("warmup: import error (non-critical)", exc_info=True)
@@ -789,11 +853,13 @@ def _warmup_imports():
 
 def main():
     from rlm_tools_bsl._config import load_project_env
+
     load_project_env()
 
     parser = argparse.ArgumentParser(description="rlm-tools-bsl MCP server")
     parser.add_argument(
-        "--version", "-V",
+        "--version",
+        "-V",
         action="version",
         version=f"%(prog)s {importlib.metadata.version('rlm-tools-bsl')}",
     )
@@ -831,6 +897,7 @@ def main():
 
     if args.command == "service":
         from rlm_tools_bsl.service import handle_service_command
+
         handle_service_command(args)
         return
 
@@ -849,7 +916,8 @@ def main():
     if args.transport != "stdio":
         logger.info(
             "transport=%s stateless_http=%s host=%s port=%s",
-            args.transport, mcp.settings.stateless_http,
+            args.transport,
+            mcp.settings.stateless_http,
             getattr(mcp.settings, "host", "?"),
             getattr(mcp.settings, "port", "?"),
         )

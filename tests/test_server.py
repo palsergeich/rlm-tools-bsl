@@ -77,16 +77,12 @@ def test_full_rlm_flow():
         assert "metadata" in result_data
 
         exec_result = _rlm_execute(
-            session_id=session_id,
-            code="files = glob_files('**/*.py')\nprint(f'Found {len(files)} Python files')"
+            session_id=session_id, code="files = glob_files('**/*.py')\nprint(f'Found {len(files)} Python files')"
         )
         exec_data = json.loads(exec_result)
         assert "Found 1 Python files" in exec_data["stdout"]
 
-        exec_result2 = _rlm_execute(
-            session_id=session_id,
-            code="print(files)"
-        )
+        exec_result2 = _rlm_execute(session_id=session_id, code="print(files)")
         exec_data2 = json.loads(exec_result2)
         assert "example.py" in exec_data2["stdout"]
 
@@ -138,9 +134,11 @@ def test_resolve_mapped_drive_returns_unc():
             return ("\\\\server\\share", winreg.REG_SZ)
         raise OSError
 
-    with patch.object(winreg, "EnumKey", side_effect=fake_enum_key), \
-         patch.object(winreg, "OpenKey", side_effect=fake_open_key), \
-         patch.object(winreg, "QueryValueEx", side_effect=fake_query):
+    with (
+        patch.object(winreg, "EnumKey", side_effect=fake_enum_key),
+        patch.object(winreg, "OpenKey", side_effect=fake_open_key),
+        patch.object(winreg, "QueryValueEx", side_effect=fake_query),
+    ):
         result = _resolve_mapped_drive("U:\\ERP\\mainconf")
         assert result == "\\\\server\\share\\ERP\\mainconf"
 
@@ -200,10 +198,7 @@ def test_read_file_in_sandbox():
         data = json.loads(result)
         session_id = data["session_id"]
 
-        exec_result = _rlm_execute(
-            session_id=session_id,
-            code="content = read_file('data.txt')\nprint(content)"
-        )
+        exec_result = _rlm_execute(session_id=session_id, code="content = read_file('data.txt')\nprint(content)")
         exec_data = json.loads(exec_result)
         assert "important data" in exec_data["stdout"]
         assert exec_data["error"] is None
@@ -221,8 +216,7 @@ def test_grep_in_sandbox():
         session_id = data["session_id"]
 
         exec_result = _rlm_execute(
-            session_id=session_id,
-            code="results = grep('class.*Controller')\nprint(len(results))"
+            session_id=session_id, code="results = grep('class.*Controller')\nprint(len(results))"
         )
         exec_data = json.loads(exec_result)
         assert "1" in exec_data["stdout"]
@@ -255,23 +249,17 @@ def test_new_helpers_in_sandbox():
 
         exec_result = _rlm_execute(
             session_id=session_id,
-            code="result = read_files(['a.txt', 'b.txt'])\nfor k, v in sorted(result.items()):\n    print(f'{k}: {v}')"
+            code="result = read_files(['a.txt', 'b.txt'])\nfor k, v in sorted(result.items()):\n    print(f'{k}: {v}')",
         )
         exec_data = json.loads(exec_result)
         assert "a.txt: hello from a" in exec_data["stdout"]
         assert "b.txt: hello from b" in exec_data["stdout"]
 
-        exec_result2 = _rlm_execute(
-            session_id=session_id,
-            code="print(grep_summary('hello'))"
-        )
+        exec_result2 = _rlm_execute(session_id=session_id, code="print(grep_summary('hello'))")
         exec_data2 = json.loads(exec_result2)
         assert "2 matches" in exec_data2["stdout"]
 
-        exec_result3 = _rlm_execute(
-            session_id=session_id,
-            code="result = grep_read('hello')\nprint(result['summary'])"
-        )
+        exec_result3 = _rlm_execute(session_id=session_id, code="result = grep_read('hello')\nprint(result['summary'])")
         exec_data3 = json.loads(exec_result3)
         assert "2 matches" in exec_data3["stdout"]
 
@@ -324,6 +312,7 @@ def test_full_detail_excludes_helper_functions_from_variables():
 def test_extension_context_main_with_nearby_extension():
     """rlm_start returns extension_context with nearby extensions for main config."""
     import textwrap
+
     with tempfile.TemporaryDirectory() as parent:
         main_dir = os.path.join(parent, "main")
         ext_dir = os.path.join(parent, "ext")
@@ -332,7 +321,8 @@ def test_extension_context_main_with_nearby_extension():
 
         # Main config
         with open(os.path.join(main_dir, "Configuration.xml"), "w", encoding="utf-8") as f:
-            f.write(textwrap.dedent("""\
+            f.write(
+                textwrap.dedent("""\
                 <?xml version="1.0" encoding="UTF-8"?>
                 <MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses">
                     <Configuration uuid="00000000-0000-0000-0000-000000000001">
@@ -342,11 +332,13 @@ def test_extension_context_main_with_nearby_extension():
                         </Properties>
                     </Configuration>
                 </MetaDataObject>
-            """))
+            """)
+            )
 
         # Extension
         with open(os.path.join(ext_dir, "Configuration.xml"), "w", encoding="utf-8") as f:
-            f.write(textwrap.dedent("""\
+            f.write(
+                textwrap.dedent("""\
                 <?xml version="1.0" encoding="UTF-8"?>
                 <MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses">
                     <Configuration uuid="00000000-0000-0000-0000-000000000002">
@@ -358,7 +350,8 @@ def test_extension_context_main_with_nearby_extension():
                         </Properties>
                     </Configuration>
                 </MetaDataObject>
-            """))
+            """)
+            )
 
         result = _rlm_start(path=main_dir, query="test ext context")
         data = json.loads(result)
@@ -379,12 +372,14 @@ def test_extension_context_main_with_nearby_extension():
 def test_extension_context_for_extension():
     """rlm_start for extension shows is_extension=True."""
     import textwrap
+
     with tempfile.TemporaryDirectory() as parent:
         ext_dir = os.path.join(parent, "myext")
         os.makedirs(ext_dir)
 
         with open(os.path.join(ext_dir, "Configuration.xml"), "w", encoding="utf-8") as f:
-            f.write(textwrap.dedent("""\
+            f.write(
+                textwrap.dedent("""\
                 <?xml version="1.0" encoding="UTF-8"?>
                 <MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses">
                     <Configuration uuid="00000000-0000-0000-0000-000000000003">
@@ -396,7 +391,8 @@ def test_extension_context_for_extension():
                         </Properties>
                     </Configuration>
                 </MetaDataObject>
-            """))
+            """)
+            )
 
         result = _rlm_start(path=ext_dir, query="test ext")
         data = json.loads(result)
@@ -461,18 +457,18 @@ def test_bsl_helpers_in_sandbox():
         assert start["config_format"] == "cf"
 
         # Test find_module
-        result = json.loads(_rlm_execute(
-            session_id=session_id,
-            code="modules = find_module('TestModule')\nprint(len(modules))"
-        ))
+        result = json.loads(
+            _rlm_execute(session_id=session_id, code="modules = find_module('TestModule')\nprint(len(modules))")
+        )
         assert "1" in result["stdout"]
         assert result["error"] is None
 
         # Test extract_procedures
-        result2 = json.loads(_rlm_execute(
-            session_id=session_id,
-            code="procs = extract_procedures(modules[0]['path'])\nprint(procs[0]['name'])"
-        ))
+        result2 = json.loads(
+            _rlm_execute(
+                session_id=session_id, code="procs = extract_procedures(modules[0]['path'])\nprint(procs[0]['name'])"
+            )
+        )
         assert "Тест" in result2["stdout"]
 
         _rlm_end(session_id)
@@ -501,12 +497,12 @@ def test_override_effort_limits():
 # Transport / main() tests
 # ---------------------------------------------------------------------------
 
+
 def test_main_default_stdio():
     """main() without args calls mcp.run(transport='stdio')."""
     from rlm_tools_bsl import server
 
-    with patch.object(server.mcp, "run") as mock_run, \
-         patch.object(sys, "argv", ["rlm-tools-bsl"]):
+    with patch.object(server.mcp, "run") as mock_run, patch.object(sys, "argv", ["rlm-tools-bsl"]):
         server.main()
         mock_run.assert_called_once_with(transport="stdio")
 
@@ -518,8 +514,10 @@ def test_main_streamable_http_arg():
     original_host = server.mcp.settings.host
     original_port = server.mcp.settings.port
     try:
-        with patch.object(server.mcp, "run") as mock_run, \
-             patch.object(sys, "argv", ["rlm-tools-bsl", "--transport", "streamable-http"]):
+        with (
+            patch.object(server.mcp, "run") as mock_run,
+            patch.object(sys, "argv", ["rlm-tools-bsl", "--transport", "streamable-http"]),
+        ):
             server.main()
             mock_run.assert_called_once_with(transport="streamable-http")
             assert server.mcp.settings.host == "127.0.0.1"
@@ -535,10 +533,10 @@ def test_main_custom_port():
 
     original_port = server.mcp.settings.port
     try:
-        with patch.object(server.mcp, "run") as mock_run, \
-             patch.object(sys, "argv", [
-                 "rlm-tools-bsl", "--transport", "streamable-http", "--port", "3000"
-             ]):
+        with (
+            patch.object(server.mcp, "run") as mock_run,
+            patch.object(sys, "argv", ["rlm-tools-bsl", "--transport", "streamable-http", "--port", "3000"]),
+        ):
             server.main()
             mock_run.assert_called_once_with(transport="streamable-http")
             assert server.mcp.settings.port == 3000
@@ -553,9 +551,11 @@ def test_main_env_transport():
     original_host = server.mcp.settings.host
     original_port = server.mcp.settings.port
     try:
-        with patch.object(server.mcp, "run") as mock_run, \
-             patch.object(sys, "argv", ["rlm-tools-bsl"]), \
-             patch.dict(os.environ, {"RLM_TRANSPORT": "streamable-http"}):
+        with (
+            patch.object(server.mcp, "run") as mock_run,
+            patch.object(sys, "argv", ["rlm-tools-bsl"]),
+            patch.dict(os.environ, {"RLM_TRANSPORT": "streamable-http"}),
+        ):
             server.main()
             mock_run.assert_called_once_with(transport="streamable-http")
     finally:
@@ -570,8 +570,7 @@ def test_main_stdio_does_not_change_settings():
     original_host = server.mcp.settings.host
     original_port = server.mcp.settings.port
     try:
-        with patch.object(server.mcp, "run") as mock_run, \
-             patch.object(sys, "argv", ["rlm-tools-bsl"]):
+        with patch.object(server.mcp, "run") as mock_run, patch.object(sys, "argv", ["rlm-tools-bsl"]):
             server.main()
             mock_run.assert_called_once_with(transport="stdio")
             assert server.mcp.settings.host == original_host
@@ -621,14 +620,14 @@ def test_streamable_http_server_starts():
         port = s.getsockname()[1]
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", "rlm_tools_bsl",
-         "--transport", "streamable-http", "--port", str(port)],
+        [sys.executable, "-m", "rlm_tools_bsl", "--transport", "streamable-http", "--port", str(port)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     try:
         # Wait for server to start
         import httpx
+
         client = httpx.Client()
         mcp_url = f"http://127.0.0.1:{port}/mcp"
         initialize_request = {

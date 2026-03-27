@@ -1,4 +1,5 @@
 """Shared configuration loading for CLI and MCP server."""
+
 from __future__ import annotations
 
 import json

@@ -13,22 +13,14 @@ def _create_many_files_fixture(tmpdir, n_files=10, *, object_category="CommonMod
     target_dir = os.path.join(tmpdir, "CommonModules", "TargetModule", "Ext")
     os.makedirs(target_dir, exist_ok=True)
     with open(os.path.join(target_dir, "Module.bsl"), "w", encoding="utf-8") as f:
-        f.write(
-            "Функция ЦелеваяФункция() Экспорт\n"
-            "    Возврат 1;\n"
-            "КонецФункции\n"
-        )
+        f.write("Функция ЦелеваяФункция() Экспорт\n    Возврат 1;\nКонецФункции\n")
 
     # Create n_files caller modules in the specified category
     for i in range(n_files):
         caller_dir = os.path.join(tmpdir, object_category, f"Caller{i:04d}", "Ext")
         os.makedirs(caller_dir, exist_ok=True)
         with open(os.path.join(caller_dir, "Module.bsl"), "w", encoding="utf-8") as f:
-            f.write(
-                f"Процедура Вызывающая{i:04d}()\n"
-                f"    Результат = TargetModule.ЦелеваяФункция();\n"
-                f"КонецПроцедуры\n"
-            )
+            f.write(f"Процедура Вызывающая{i:04d}()\n    Результат = TargetModule.ЦелеваяФункция();\nКонецПроцедуры\n")
 
 
 def _make_bsl(tmpdir):
@@ -50,6 +42,7 @@ def _make_bsl(tmpdir):
 
 
 # --- Basic prefilter limit tests ---
+
 
 def test_prefilter_finds_callers_small_config():
     """Parallel prefilter should find callers in small configs."""
@@ -95,6 +88,7 @@ def test_meta_has_more_pagination():
 
 # --- Smart prefilter: path-based prioritization ---
 
+
 def test_smart_prefilter_prioritizes_matching_paths(monkeypatch):
     """Files with module_hint in path should be scanned first when truncated."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -105,16 +99,10 @@ def test_smart_prefilter_prioritizes_matching_paths(monkeypatch):
         target_dir = os.path.join(tmpdir, "InformationRegisters", "ГрафикПлатежей", "Ext")
         os.makedirs(target_dir, exist_ok=True)
         with open(os.path.join(target_dir, "ManagerModule.bsl"), "w", encoding="utf-8") as f:
-            f.write(
-                "Процедура РассчитатьГрафик() Экспорт\n"
-                "    Возврат;\n"
-                "КонецПроцедуры\n"
-            )
+            f.write("Процедура РассчитатьГрафик() Экспорт\n    Возврат;\nКонецПроцедуры\n")
 
         # Caller that has "ГрафикПлатежей" in its path — should be prioritized
-        priority_dir = os.path.join(
-            tmpdir, "Documents", "ОплатаОтГрафикПлатежей", "Ext"
-        )
+        priority_dir = os.path.join(tmpdir, "Documents", "ОплатаОтГрафикПлатежей", "Ext")
         os.makedirs(priority_dir, exist_ok=True)
         with open(os.path.join(priority_dir, "ObjectModule.bsl"), "w", encoding="utf-8") as f:
             f.write(
@@ -128,17 +116,9 @@ def test_smart_prefilter_prioritizes_matching_paths(monkeypatch):
             filler_dir = os.path.join(tmpdir, "CommonModules", f"Filler{i:04d}", "Ext")
             os.makedirs(filler_dir, exist_ok=True)
             with open(os.path.join(filler_dir, "Module.bsl"), "w", encoding="utf-8") as f:
-                f.write(
-                    f"Процедура Заглушка{i:04d}()\n"
-                    f"    Возврат;\n"
-                    f"КонецПроцедуры\n"
-                )
+                f.write(f"Процедура Заглушка{i:04d}()\n    Возврат;\nКонецПроцедуры\n")
 
         bsl = _make_bsl(tmpdir)
-
-        # Monkeypatch max_prefilter to a small value to force truncation
-        import rlm_tools_bsl.bsl_helpers as bsl_mod
-        original_code = bsl_mod.make_bsl_helpers.__code__
 
         # Instead of monkeypatching internals, test via a low limit:
         # We create a scenario where the priority file is beyond the limit
@@ -148,9 +128,7 @@ def test_smart_prefilter_prioritizes_matching_paths(monkeypatch):
         # Smart prefilter should move it to the front.
 
         # Direct test: call with module_hint to trigger smart prefilter logic
-        result = bsl["find_callers_context"](
-            "РассчитатьГрафик", "ГрафикПлатежей", 0, 50
-        )
+        result = bsl["find_callers_context"]("РассчитатьГрафик", "ГрафикПлатежей", 0, 50)
         # The priority caller should be found
         caller_names = [c["caller_name"] for c in result["callers"]]
         assert "ОбработкаПроведения" in caller_names
@@ -181,6 +159,7 @@ def test_smart_prefilter_hint_tokens_from_module_hint():
 
 # --- Qualified search fallback ---
 
+
 def _create_qualified_call_fixture(tmpdir):
     """Create a fixture where the proc name doesn't appear standalone,
     only as a qualified call (Object.ProcName)."""
@@ -191,11 +170,7 @@ def _create_qualified_call_fixture(tmpdir):
     target_dir = os.path.join(tmpdir, "InformationRegisters", "ГрафикПлатежей", "Ext")
     os.makedirs(target_dir, exist_ok=True)
     with open(os.path.join(target_dir, "ManagerModule.bsl"), "w", encoding="utf-8") as f:
-        f.write(
-            "Процедура РассчитатьГрафик() Экспорт\n"
-            "    Возврат;\n"
-            "КонецПроцедуры\n"
-        )
+        f.write("Процедура РассчитатьГрафик() Экспорт\n    Возврат;\nКонецПроцедуры\n")
 
     # Caller that only uses qualified name: ГрафикПлатежей.РассчитатьГрафик()
     # The bare name "рассчитатьграфик" does NOT appear in this file
@@ -204,9 +179,7 @@ def _create_qualified_call_fixture(tmpdir):
     os.makedirs(caller_dir, exist_ok=True)
     with open(os.path.join(caller_dir, "ObjectModule.bsl"), "w", encoding="utf-8") as f:
         f.write(
-            "Процедура ОбработкаПроведения()\n"
-            "    РегистрыСведений.ГрафикПлатежей.РассчитатьГрафик();\n"
-            "КонецПроцедуры\n"
+            "Процедура ОбработкаПроведения()\n    РегистрыСведений.ГрафикПлатежей.РассчитатьГрафик();\nКонецПроцедуры\n"
         )
 
 
@@ -228,9 +201,7 @@ def test_qualified_fallback_finds_callers():
         # The caller file does contain "рассчитатьграфик" as part of the qualified call,
         # so prefilter will find it. But test the qualified fallback path by
         # verifying that module_hint is correctly used.
-        result = bsl["find_callers_context"](
-            "РассчитатьГрафик", "ГрафикПлатежей", 0, 50
-        )
+        result = bsl["find_callers_context"]("РассчитатьГрафик", "ГрафикПлатежей", 0, 50)
         caller_names = [c["caller_name"] for c in result["callers"]]
         assert "ОбработкаПроведения" in caller_names
 
@@ -253,7 +224,7 @@ def test_qualified_fallback_with_truncated_prefilter(monkeypatch):
     """Simulate truncated prefilter with no matches to trigger qualified grep fallback."""
     with tempfile.TemporaryDirectory() as tmpdir:
         _create_qualified_call_fixture(tmpdir)
-        bsl = _make_bsl(tmpdir)
+        _make_bsl(tmpdir)
 
         # To truly test the fallback path, we need the prefilter to find nothing.
         # Since the bare proc name IS in the caller file, we use a unique proc name
@@ -263,26 +234,16 @@ def test_qualified_fallback_with_truncated_prefilter(monkeypatch):
         reg_dir = os.path.join(tmpdir, "InformationRegisters", "ТестРегистр", "Ext")
         os.makedirs(reg_dir, exist_ok=True)
         with open(os.path.join(reg_dir, "ManagerModule.bsl"), "w", encoding="utf-8") as f:
-            f.write(
-                "Процедура УникальныйМетод12345() Экспорт\n"
-                "    Возврат;\n"
-                "КонецПроцедуры\n"
-            )
+            f.write("Процедура УникальныйМетод12345() Экспорт\n    Возврат;\nКонецПроцедуры\n")
 
         # Caller uses qualified name only
         caller_dir = os.path.join(tmpdir, "Documents", "ТестДок", "Ext")
         os.makedirs(caller_dir, exist_ok=True)
         with open(os.path.join(caller_dir, "ObjectModule.bsl"), "w", encoding="utf-8") as f:
-            f.write(
-                "Процедура Вызов()\n"
-                "    РегистрыСведений.ТестРегистр.УникальныйМетод12345();\n"
-                "КонецПроцедуры\n"
-            )
+            f.write("Процедура Вызов()\n    РегистрыСведений.ТестРегистр.УникальныйМетод12345();\nКонецПроцедуры\n")
 
         # Re-build bsl helpers to pick up new files
         bsl2 = _make_bsl(tmpdir)
-        result = bsl2["find_callers_context"](
-            "УникальныйМетод12345", "ТестРегистр", 0, 50
-        )
+        result = bsl2["find_callers_context"]("УникальныйМетод12345", "ТестРегистр", 0, 50)
         caller_names = [c["caller_name"] for c in result["callers"]]
         assert "Вызов" in caller_names

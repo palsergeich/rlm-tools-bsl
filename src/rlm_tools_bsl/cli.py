@@ -7,10 +7,10 @@ Usage::
     rlm-bsl-index index info <path>
     rlm-bsl-index index drop <path>
 """
+
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
 from pathlib import Path
@@ -49,8 +49,9 @@ def _fmt_age(seconds: float) -> str:
 # Subcommands
 # ---------------------------------------------------------------------------
 
+
 def _cmd_build(args: argparse.Namespace) -> None:
-    from rlm_tools_bsl.bsl_index import IndexBuilder, get_index_db_path
+    from rlm_tools_bsl.bsl_index import IndexBuilder
 
     base_path = _resolve_path(args.path)
     build_calls = not args.no_calls
@@ -67,14 +68,17 @@ def _cmd_build(args: argparse.Namespace) -> None:
     t0 = time.time()
     builder = IndexBuilder()
     db_path = builder.build(
-        base_path, build_calls=build_calls,
-        build_metadata=build_metadata, build_fts=build_fts,
+        base_path,
+        build_calls=build_calls,
+        build_metadata=build_metadata,
+        build_fts=build_fts,
         build_synonyms=build_synonyms,
     )
     elapsed = time.time() - t0
 
     # Read back stats
     from rlm_tools_bsl.bsl_index import IndexReader
+
     reader = IndexReader(db_path)
     stats = reader.get_statistics()
     reader.close()
@@ -120,6 +124,7 @@ def _cmd_update(args: argparse.Namespace) -> None:
 
     # Read back stats
     from rlm_tools_bsl.bsl_index import IndexReader
+
     reader = IndexReader(db_path)
     stats = reader.get_statistics()
     reader.close()
@@ -225,17 +230,21 @@ def _cmd_drop(args: argparse.Namespace) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     from rlm_tools_bsl._config import load_project_env
+
     load_project_env()
 
     import importlib.metadata
+
     parser = argparse.ArgumentParser(
         prog="rlm-bsl-index",
         description="1C (BSL) method index management",
     )
     parser.add_argument(
-        "--version", "-V",
+        "--version",
+        "-V",
         action="version",
         version=f"%(prog)s {importlib.metadata.version('rlm-tools-bsl')}",
     )

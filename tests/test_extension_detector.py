@@ -1,16 +1,14 @@
 """Tests for extension_detector module."""
+
 import os
 import tempfile
 import textwrap
 
 from rlm_tools_bsl.extension_detector import (
     ConfigRole,
-    ExtensionInfo,
     detect_extension_context,
     find_extension_overrides,
     _detect_single,
-    _parse_config_xml,
-    _parse_config_mdo,
 )
 
 
@@ -88,6 +86,7 @@ def _write(path, content):
 # Tests: _detect_single
 # ---------------------------------------------------------------------------
 
+
 def test_detect_main_cf():
     with tempfile.TemporaryDirectory() as d:
         _write(os.path.join(d, "Configuration.xml"), _CF_MAIN_XML)
@@ -102,8 +101,7 @@ def test_detect_main_cf():
 
 def test_detect_extension_cf():
     with tempfile.TemporaryDirectory() as d:
-        _write(os.path.join(d, "Configuration.xml"),
-               _cf_extension_xml("ТестовоеРасширение", "AddOn", "мр_"))
+        _write(os.path.join(d, "Configuration.xml"), _cf_extension_xml("ТестовоеРасширение", "AddOn", "мр_"))
         info = _detect_single(d)
         assert info is not None
         assert info.role == ConfigRole.EXTENSION
@@ -125,8 +123,10 @@ def test_detect_main_edt():
 
 def test_detect_extension_edt():
     with tempfile.TemporaryDirectory() as d:
-        _write(os.path.join(d, "Configuration", "Configuration.mdo"),
-               _edt_extension_mdo("ТестовоеРасширение", "Customization", "тст_"))
+        _write(
+            os.path.join(d, "Configuration", "Configuration.mdo"),
+            _edt_extension_mdo("ТестовоеРасширение", "Customization", "тст_"),
+        )
         info = _detect_single(d)
         assert info is not None
         assert info.role == ConfigRole.EXTENSION
@@ -140,8 +140,7 @@ def test_cfe_wrapper_dir():
     """Extension inside a wrapper subdirectory (e.g. cfe/MyExt/Configuration.xml)."""
     with tempfile.TemporaryDirectory() as d:
         wrapper = os.path.join(d, "ТестовоеРасширение")
-        _write(os.path.join(wrapper, "Configuration.xml"),
-               _cf_extension_xml("Расш1", "Fix", "р1_"))
+        _write(os.path.join(wrapper, "Configuration.xml"), _cf_extension_xml("Расш1", "Fix", "р1_"))
         info = _detect_single(d)
         assert info is not None
         assert info.role == ConfigRole.EXTENSION
@@ -161,14 +160,14 @@ def test_empty_dir():
 # Tests: detect_extension_context
 # ---------------------------------------------------------------------------
 
+
 def test_nearby_extensions():
     """Main config sees nearby extension."""
     with tempfile.TemporaryDirectory() as parent:
         main_dir = os.path.join(parent, "main")
         ext_dir = os.path.join(parent, "доработки")
         _write(os.path.join(main_dir, "Configuration.xml"), _CF_MAIN_XML)
-        _write(os.path.join(ext_dir, "Configuration.xml"),
-               _cf_extension_xml("Расш", "Customization", "р_"))
+        _write(os.path.join(ext_dir, "Configuration.xml"), _cf_extension_xml("Расш", "Customization", "р_"))
 
         ctx = detect_extension_context(main_dir)
         assert ctx.current.role == ConfigRole.MAIN
@@ -185,8 +184,7 @@ def test_nearby_main_from_extension():
         main_dir = os.path.join(parent, "основная")
         ext_dir = os.path.join(parent, "расширение")
         _write(os.path.join(main_dir, "Configuration.xml"), _CF_MAIN_XML)
-        _write(os.path.join(ext_dir, "Configuration.xml"),
-               _cf_extension_xml("Расш", "AddOn", "р_"))
+        _write(os.path.join(ext_dir, "Configuration.xml"), _cf_extension_xml("Расш", "AddOn", "р_"))
 
         ctx = detect_extension_context(ext_dir)
         assert ctx.current.role == ConfigRole.EXTENSION
@@ -202,14 +200,15 @@ def test_multiple_extensions():
         main_dir = os.path.join(parent, "конфа")
         _write(os.path.join(main_dir, "Configuration.xml"), _CF_MAIN_XML)
 
-        for i, (name, purpose, prefix) in enumerate([
-            ("Расш1", "AddOn", "р1_"),
-            ("Расш2", "Customization", "р2_"),
-            ("Расш3", "Fix", "р3_"),
-        ]):
+        for i, (name, purpose, prefix) in enumerate(
+            [
+                ("Расш1", "AddOn", "р1_"),
+                ("Расш2", "Customization", "р2_"),
+                ("Расш3", "Fix", "р3_"),
+            ]
+        ):
             ext_dir = os.path.join(parent, f"ext{i}")
-            _write(os.path.join(ext_dir, "Configuration.xml"),
-                   _cf_extension_xml(name, purpose, prefix))
+            _write(os.path.join(ext_dir, "Configuration.xml"), _cf_extension_xml(name, purpose, prefix))
 
         ctx = detect_extension_context(main_dir)
         assert ctx.current.role == ConfigRole.MAIN
@@ -232,8 +231,7 @@ def test_warnings_main_with_extensions():
         main_dir = os.path.join(parent, "main")
         ext_dir = os.path.join(parent, "ext")
         _write(os.path.join(main_dir, "Configuration.xml"), _CF_MAIN_XML)
-        _write(os.path.join(ext_dir, "Configuration.xml"),
-               _cf_extension_xml("Тест", "AddOn", "т_"))
+        _write(os.path.join(ext_dir, "Configuration.xml"), _cf_extension_xml("Тест", "AddOn", "т_"))
 
         ctx = detect_extension_context(main_dir)
         assert any("Extensions detected" in w for w in ctx.warnings)
@@ -244,8 +242,7 @@ def test_warnings_extension_standalone():
     """Extension without nearby main config."""
     with tempfile.TemporaryDirectory() as parent:
         ext_dir = os.path.join(parent, "ext")
-        _write(os.path.join(ext_dir, "Configuration.xml"),
-               _cf_extension_xml("Одиночка", "Customization", "о_"))
+        _write(os.path.join(ext_dir, "Configuration.xml"), _cf_extension_xml("Одиночка", "Customization", "о_"))
 
         ctx = detect_extension_context(ext_dir)
         assert ctx.current.role == ConfigRole.EXTENSION
@@ -284,9 +281,7 @@ _BSL_WITH_ANNOTATIONS = textwrap.dedent("""\
 def test_find_overrides_all():
     """All 4 annotation types are detected."""
     with tempfile.TemporaryDirectory() as d:
-        bsl_path = os.path.join(
-            d, "Documents", "РеализацияТоваровУслуг", "Ext", "ManagerModule.bsl"
-        )
+        bsl_path = os.path.join(d, "Documents", "РеализацияТоваровУслуг", "Ext", "ManagerModule.bsl")
         _write(bsl_path, _BSL_WITH_ANNOTATIONS)
 
         overrides = find_extension_overrides(d)
@@ -332,8 +327,7 @@ def test_all_purposes():
     """All three purpose values are correctly detected."""
     for purpose in ("AddOn", "Customization", "Fix"):
         with tempfile.TemporaryDirectory() as d:
-            _write(os.path.join(d, "Configuration.xml"),
-                   _cf_extension_xml("Тест", purpose, "т_"))
+            _write(os.path.join(d, "Configuration.xml"), _cf_extension_xml("Тест", purpose, "т_"))
             info = _detect_single(d)
             assert info is not None
             assert info.purpose == purpose
@@ -343,12 +337,15 @@ def test_annotation_izmenenieikontrol():
     """&ИзменениеИКонтроль annotation is correctly parsed."""
     with tempfile.TemporaryDirectory() as d:
         bsl = os.path.join(d, "CommonModules", "МойМодуль", "Ext", "Module.bsl")
-        _write(bsl, textwrap.dedent("""\
+        _write(
+            bsl,
+            textwrap.dedent("""\
             &ИзменениеИКонтроль("СтароеИмя")
             Процедура мр_СтароеИмя()
                 // контроль
             КонецПроцедуры
-        """))
+        """),
+        )
 
         overrides = find_extension_overrides(d)
         assert len(overrides) == 1

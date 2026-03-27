@@ -18,6 +18,23 @@ uv run pytest tests/ -v
 
 Тесты запускаются без реальных конфигураций 1С — используются фикстуры с минимальными файловыми структурами.
 
+## Линтер и форматтер
+
+В проекте используется [ruff](https://github.com/astral-sh/ruff). CI проверяет линтинг и форматирование на каждый push/PR.
+
+Проверить локально перед коммитом:
+```bash
+uv run ruff check src/ tests/      # линтер
+uv run ruff format --check src/ tests/  # проверка форматирования
+```
+
+Автоформат:
+```bash
+uv run ruff format src/ tests/
+```
+
+Конфигурация — в `pyproject.toml` (секция `[tool.ruff]`).
+
 ## Code style
 
 - Python 3.10+, без type annotations в существующем коде (не добавляйте в чужой код)

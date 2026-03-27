@@ -223,22 +223,25 @@ def test_read_file_utf8_sig():
 
 def test_cache_invalidation_on_rename():
     """Cache must invalidate when files are renamed even if count stays the same."""
-    from rlm_tools_bsl.cache import load_index, save_index, _paths_hash
+    from rlm_tools_bsl.cache import load_index, save_index
     from rlm_tools_bsl.format_detector import BslFileInfo
 
     with tempfile.TemporaryDirectory() as tmpdir:
         base = tmpdir
 
         def make_entry(path):
-            return (path, BslFileInfo(
-                relative_path=path,
-                category="CommonModules",
-                object_name="Test",
-                module_type="Module",
-                form_name=None,
-                command_name=None,
-                is_form_module=False,
-            ))
+            return (
+                path,
+                BslFileInfo(
+                    relative_path=path,
+                    category="CommonModules",
+                    object_name="Test",
+                    module_type="Module",
+                    form_name=None,
+                    command_name=None,
+                    is_form_module=False,
+                ),
+            )
 
         original = [make_entry("a.bsl"), make_entry("b.bsl")]
         save_index(base, bsl_count=2, entries=original)

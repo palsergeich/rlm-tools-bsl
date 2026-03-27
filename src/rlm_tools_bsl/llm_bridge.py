@@ -15,9 +15,7 @@ DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 def get_client() -> Anthropic:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY environment variable is required for llm_query()"
-        )
+        raise RuntimeError("ANTHROPIC_API_KEY environment variable is required for llm_query()")
     return Anthropic(api_key=api_key)
 
 
@@ -104,10 +102,7 @@ def get_llm_query_fn():
     if base_url:
         model = os.environ.get("RLM_LLM_MODEL")
         if not model:
-            logger.warning(
-                "RLM_LLM_BASE_URL is set but RLM_LLM_MODEL is missing; "
-                "llm_query will not be available"
-            )
+            logger.warning("RLM_LLM_BASE_URL is set but RLM_LLM_MODEL is missing; llm_query will not be available")
             return None
         api_key = os.environ.get("RLM_LLM_API_KEY", "")
         try:
@@ -124,8 +119,7 @@ def get_llm_query_fn():
             return None
 
     logger.info(
-        "No LLM provider configured; set RLM_LLM_BASE_URL+RLM_LLM_MODEL "
-        "or ANTHROPIC_API_KEY to enable llm_query"
+        "No LLM provider configured; set RLM_LLM_BASE_URL+RLM_LLM_MODEL or ANTHROPIC_API_KEY to enable llm_query"
     )
     return None
 
@@ -162,10 +156,7 @@ def make_llm_query_batched(llm_query_fn, max_workers: int = 8):
 
         results: dict[int, str] = {}
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_idx = {
-                executor.submit(llm_query_fn, prompt, context): i
-                for i, prompt in enumerate(prompts)
-            }
+            future_to_idx = {executor.submit(llm_query_fn, prompt, context): i for i, prompt in enumerate(prompts)}
             for future in as_completed(future_to_idx):
                 i = future_to_idx[future]
                 try:

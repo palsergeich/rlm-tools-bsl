@@ -10,22 +10,41 @@ import threading
 import time as _time
 import traceback
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from rlm_tools_bsl.helpers import make_helpers
 from rlm_tools_bsl.bsl_helpers import make_bsl_helpers
 
 
-ALLOWED_MODULES = frozenset({
-    "re", "json", "collections", "math",
-    "fnmatch", "itertools", "functools", "operator", "string",
-    "textwrap", "difflib", "statistics",
-})
+ALLOWED_MODULES = frozenset(
+    {
+        "re",
+        "json",
+        "collections",
+        "math",
+        "fnmatch",
+        "itertools",
+        "functools",
+        "operator",
+        "string",
+        "textwrap",
+        "difflib",
+        "statistics",
+    }
+)
 
-BLOCKED_BUILTINS = frozenset({
-    "exec", "eval", "compile", "__import__", "breakpoint",
-    "exit", "quit", "input",
-})
+BLOCKED_BUILTINS = frozenset(
+    {
+        "exec",
+        "eval",
+        "compile",
+        "__import__",
+        "breakpoint",
+        "exit",
+        "quit",
+        "input",
+    }
+)
 
 
 @dataclass
@@ -75,10 +94,7 @@ class Sandbox:
         self._setup_namespace()
 
     def _setup_namespace(self) -> None:
-        safe_builtins = {
-            k: v for k, v in builtins.__dict__.items()
-            if k not in BLOCKED_BUILTINS
-        }
+        safe_builtins = {k: v for k, v in builtins.__dict__.items() if k not in BLOCKED_BUILTINS}
         safe_builtins["__import__"] = _make_restricted_import(ALLOWED_MODULES)
 
         original_open = builtins.open
@@ -122,15 +138,15 @@ class Sandbox:
         wrapped = {}
         for name, obj in helpers.items():
             if callable(obj):
+
                 @functools.wraps(obj)
                 def _timed(*args, _fn=obj, _name=name, **kwargs):
                     t0 = _time.monotonic()
                     try:
                         return _fn(*args, **kwargs)
                     finally:
-                        self._helper_calls.append(
-                            HelperCall(_name, _time.monotonic() - t0)
-                        )
+                        self._helper_calls.append(HelperCall(_name, _time.monotonic() - t0))
+
                 wrapped[name] = _timed
             else:
                 wrapped[name] = obj
@@ -142,15 +158,10 @@ class Sandbox:
             yield
             return
 
-        if (
-            threading.current_thread() is threading.main_thread()
-            and hasattr(signal, "SIGALRM")
-        ):
+        if threading.current_thread() is threading.main_thread() and hasattr(signal, "SIGALRM"):
             # Unix: signal-based timeout (precise, interrupts C extensions)
             def _raise_timeout(_signum, _frame):
-                raise TimeoutError(
-                    f"Execution timed out after {self._execution_timeout_seconds} seconds"
-                )
+                raise TimeoutError(f"Execution timed out after {self._execution_timeout_seconds} seconds")
 
             previous_handler = signal.getsignal(signal.SIGALRM)
             signal.signal(signal.SIGALRM, _raise_timeout)
@@ -165,6 +176,7 @@ class Sandbox:
             # Sets a flag that we check — cannot interrupt blocking I/O,
             # but catches long-running Python loops.
             import ctypes
+
             timed_out = threading.Event()
             target_tid = threading.current_thread().ident
 
@@ -184,9 +196,7 @@ class Sandbox:
             finally:
                 timer.cancel()
                 if timed_out.is_set():
-                    raise TimeoutError(
-                        f"Execution timed out after {self._execution_timeout_seconds} seconds"
-                    )
+                    raise TimeoutError(f"Execution timed out after {self._execution_timeout_seconds} seconds")
 
     def execute(self, code: str) -> ExecutionResult:
         self._helper_calls.clear()
@@ -203,7 +213,7 @@ class Sandbox:
 
         stdout = stdout_capture.getvalue()
         if len(stdout) > self._max_output_chars:
-            stdout = stdout[:self._max_output_chars] + "\n... [output truncated]"
+            stdout = stdout[: self._max_output_chars] + "\n... [output truncated]"
 
         return ExecutionResult(
             stdout=stdout,
@@ -225,8 +235,7 @@ class Sandbox:
                 )
             elif ".xml" in code or ".bsl" in code:
                 hints.append(
-                    "HINT: Use find_module('Name') or glob_files('**/pattern') "
-                    "to discover correct file paths first."
+                    "HINT: Use find_module('Name') or glob_files('**/pattern') to discover correct file paths first."
                 )
 
         if "TimeoutError" in error:
@@ -237,15 +246,11 @@ class Sandbox:
             )
 
         if "NameError" in error:
-            hints.append(
-                "HINT: Call help() to see available functions. "
-                "Variables persist between rlm_execute calls."
-            )
+            hints.append("HINT: Call help() to see available functions. Variables persist between rlm_execute calls.")
 
         if "import" in error.lower() and "restricted" in error.lower():
             hints.append(
-                "HINT: Only standard library modules are allowed. "
-                "Use built-in helpers instead of external libraries."
+                "HINT: Only standard library modules are allowed. Use built-in helpers instead of external libraries."
             )
 
         if hints:
@@ -254,7 +259,4 @@ class Sandbox:
         return error
 
     def list_variables(self) -> list[str]:
-        return [
-            k for k in self._namespace
-            if not k.startswith("_") and k != "__builtins__"
-        ]
+        return [k for k in self._namespace if not k.startswith("_") and k != "__builtins__"]

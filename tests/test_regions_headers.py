@@ -3,12 +3,12 @@
 Tests: _parse_regions(), _extract_header_comment(), IndexReader search methods,
 helpers (search_regions, search_module_headers), diagnostics, delta-cleanup.
 """
+
 import sqlite3
 
 import pytest
 
 from rlm_tools_bsl.bsl_index import (
-    BUILDER_VERSION,
     IndexBuilder,
     IndexReader,
     _extract_header_comment,
@@ -23,7 +23,6 @@ from rlm_tools_bsl.bsl_index import (
 
 
 class TestParseRegions:
-
     def test_simple_region(self):
         lines = [
             "#Область Инициализация",
@@ -157,7 +156,6 @@ class TestParseRegions:
 
 
 class TestExtractHeaderComment:
-
     def test_typical_header(self):
         lines = [
             "// Модуль расчёта себестоимости",
@@ -276,12 +274,7 @@ def _make_regions_fixture(tmp_path):
     doc_dir = tmp_path / "Documents" / "АвансовыйОтчет" / "Ext"
     doc_dir.mkdir(parents=True)
     (doc_dir / "ObjectModule.bsl").write_text(
-        "#Область ОбработчикиСобытий\n"
-        "\n"
-        "Процедура ПриЗаписи(Отказ)\n"
-        "КонецПроцедуры\n"
-        "\n"
-        "#КонецОбласти\n",
+        "#Область ОбработчикиСобытий\n\nПроцедура ПриЗаписи(Отказ)\nКонецПроцедуры\n\n#КонецОбласти\n",
         encoding="utf-8-sig",
     )
 
@@ -298,14 +291,15 @@ def built_regions_index(regions_project, monkeypatch):
     monkeypatch.setenv("RLM_INDEX_DIR", str(regions_project / ".index"))
     builder = IndexBuilder()
     db_path = builder.build(
-        str(regions_project), build_calls=False, build_fts=False,
+        str(regions_project),
+        build_calls=False,
+        build_fts=False,
         build_synonyms=False,
     )
     return db_path, regions_project
 
 
 class TestRegionsIntegration:
-
     def test_regions_table_populated(self, built_regions_index):
         db_path, _ = built_regions_index
         conn = sqlite3.connect(str(db_path))
@@ -382,33 +376,27 @@ class TestRegionsIntegration:
     def test_builder_version_is_8(self, built_regions_index):
         db_path, _ = built_regions_index
         conn = sqlite3.connect(str(db_path))
-        ver = conn.execute(
-            "SELECT value FROM index_meta WHERE key='builder_version'"
-        ).fetchone()[0]
+        ver = conn.execute("SELECT value FROM index_meta WHERE key='builder_version'").fetchone()[0]
         conn.close()
         assert ver == "8"
 
 
 class TestRegionsDeltaCleanup:
-
     def test_changed_file_updates_regions(self, regions_project, monkeypatch):
         """When a file changes, old regions/headers are replaced with new ones."""
         monkeypatch.setenv("RLM_INDEX_DIR", str(regions_project / ".idx_delta"))
         builder = IndexBuilder()
         builder.build(
-            str(regions_project), build_calls=False, build_fts=False,
+            str(regions_project),
+            build_calls=False,
+            build_fts=False,
             build_synonyms=False,
         )
 
         # Modify the file to have different regions
-        module_path = (
-            regions_project / "CommonModules" / "ТестМодуль" / "Ext" / "Module.bsl"
-        )
+        module_path = regions_project / "CommonModules" / "ТестМодуль" / "Ext" / "Module.bsl"
         module_path.write_text(
-            "#Область НоваяОбласть\n"
-            "Процедура Новая() Экспорт\n"
-            "КонецПроцедуры\n"
-            "#КонецОбласти\n",
+            "#Область НоваяОбласть\nПроцедура Новая() Экспорт\nКонецПроцедуры\n#КонецОбласти\n",
             encoding="utf-8-sig",
         )
 
@@ -419,9 +407,7 @@ class TestRegionsDeltaCleanup:
         conn = sqlite3.connect(str(db_path))
         # Check that old regions are gone and new one is present
         rows = conn.execute(
-            "SELECT r.name FROM regions r "
-            "JOIN modules m ON m.id = r.module_id "
-            "WHERE m.object_name = 'ТестМодуль'"
+            "SELECT r.name FROM regions r JOIN modules m ON m.id = r.module_id WHERE m.object_name = 'ТестМодуль'"
         ).fetchall()
         conn.close()
         names = [r[0] for r in rows]
@@ -430,25 +416,22 @@ class TestRegionsDeltaCleanup:
 
 
 class TestV7MigrationBackfill:
-
     def test_v7_migration_backfills_regions_data(self, regions_project, monkeypatch):
         """v7→v8 migration must actually populate regions/module_headers with data."""
         monkeypatch.setenv("RLM_INDEX_DIR", str(regions_project / ".idx_backfill"))
         builder = IndexBuilder()
         db_path = builder.build(
-            str(regions_project), build_calls=False, build_fts=False,
+            str(regions_project),
+            build_calls=False,
+            build_fts=False,
             build_synonyms=False,
         )
         # Simulate v7: drop new tables, set version=7
         conn = sqlite3.connect(str(db_path))
         conn.execute("DROP TABLE IF EXISTS regions")
         conn.execute("DROP TABLE IF EXISTS module_headers")
-        conn.execute(
-            "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('builder_version', '7')"
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('version', '7')"
-        )
+        conn.execute("INSERT OR REPLACE INTO index_meta (key, value) VALUES ('builder_version', '7')")
+        conn.execute("INSERT OR REPLACE INTO index_meta (key, value) VALUES ('version', '7')")
         conn.commit()
         conn.close()
 
@@ -464,7 +447,6 @@ class TestV7MigrationBackfill:
 
 
 class TestRegionsHelpers:
-
     def test_search_regions_helper(self, built_regions_index):
         db_path, project = built_regions_index
         from rlm_tools_bsl.bsl_helpers import make_bsl_helpers
@@ -531,7 +513,6 @@ class TestRegionsHelpers:
         assert info["has_regions"] is True
         assert info["has_module_headers"] is True
 
-
     def test_capabilities_true_even_with_zero_rows(self, tmp_path, monkeypatch):
         """has_regions/has_module_headers must be True on v8 index even if tables are empty."""
         from rlm_tools_bsl.bsl_helpers import make_bsl_helpers
@@ -540,9 +521,7 @@ class TestRegionsHelpers:
         proj = tmp_path / "empty_proj"
         mod_dir = proj / "CommonModules" / "Пустой" / "Ext"
         mod_dir.mkdir(parents=True)
-        (mod_dir / "Module.bsl").write_text(
-            "Процедура Тест()\nКонецПроцедуры\n", encoding="utf-8-sig"
-        )
+        (mod_dir / "Module.bsl").write_text("Процедура Тест()\nКонецПроцедуры\n", encoding="utf-8-sig")
         monkeypatch.setenv("RLM_INDEX_DIR", str(proj / ".idx"))
         builder = IndexBuilder()
         db_path = builder.build(str(proj), build_calls=False, build_fts=False, build_synonyms=False)
@@ -573,9 +552,7 @@ class TestRegionsHelpers:
         proj = tmp_path / "empty_proj2"
         mod_dir = proj / "CommonModules" / "Пустой" / "Ext"
         mod_dir.mkdir(parents=True)
-        (mod_dir / "Module.bsl").write_text(
-            "Процедура Тест()\nКонецПроцедуры\n", encoding="utf-8-sig"
-        )
+        (mod_dir / "Module.bsl").write_text("Процедура Тест()\nКонецПроцедуры\n", encoding="utf-8-sig")
         monkeypatch.setenv("RLM_INDEX_DIR", str(proj / ".idx"))
         builder = IndexBuilder()
         db_path = builder.build(str(proj), build_calls=False, build_fts=False, build_synonyms=False)
@@ -591,7 +568,6 @@ class TestRegionsHelpers:
 
 
 class TestRegionsStrategy:
-
     def test_strategy_includes_search_regions(self, built_regions_index):
         db_path, _ = built_regions_index
         from rlm_tools_bsl.bsl_knowledge import get_strategy

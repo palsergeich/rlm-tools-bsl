@@ -39,9 +39,7 @@ class SessionManager:
         with self._lock:
             self._cleanup_expired_locked()
             if len(self._sessions) >= self._max_sessions:
-                raise RuntimeError(
-                    f"Cannot create session: max sessions ({self._max_sessions}) reached"
-                )
+                raise RuntimeError(f"Cannot create session: max sessions ({self._max_sessions}) reached")
             session_id = uuid.uuid4().hex[:12]
             self._sessions[session_id] = Session(
                 session_id=session_id,
@@ -71,10 +69,7 @@ class SessionManager:
 
     def _cleanup_expired_locked(self) -> list[str]:
         now = time.time()
-        expired = [
-            sid for sid, s in self._sessions.items()
-            if now - s.last_used > self._timeout_seconds
-        ]
+        expired = [sid for sid, s in self._sessions.items() if now - s.last_used > self._timeout_seconds]
         for sid in expired:
             self._sessions.pop(sid, None)
         return expired

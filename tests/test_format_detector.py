@@ -2,8 +2,6 @@ import os
 import tempfile
 
 from rlm_tools_bsl.format_detector import (
-    BslFileInfo,
-    FormatInfo,
     METADATA_CATEGORIES,
     MODULE_TYPE_MAP,
     SourceFormat,
@@ -13,6 +11,7 @@ from rlm_tools_bsl.format_detector import (
 
 
 # --- detect_format ---
+
 
 def test_detect_cf_format():
     """CF format: Configuration.xml + /Ext/ directories with .bsl files."""
@@ -69,6 +68,7 @@ def test_detect_empty_directory():
 
 
 # --- parse_bsl_path ---
+
 
 def test_parse_cf_common_module():
     with tempfile.TemporaryDirectory() as base:
@@ -170,6 +170,7 @@ def test_parse_register_module():
 
 
 # --- Constants ---
+
 
 def test_metadata_categories_is_frozenset():
     assert isinstance(METADATA_CATEGORIES, frozenset)

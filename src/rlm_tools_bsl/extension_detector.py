@@ -4,6 +4,7 @@ Determines whether a given source directory is a main configuration or an
 extension, discovers nearby extensions/main configs, and performs targeted
 scanning of BSL files for interception annotations.
 """
+
 from __future__ import annotations
 
 import os
@@ -13,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from rlm_tools_bsl.format_detector import parse_bsl_path, METADATA_CATEGORIES
+from rlm_tools_bsl.format_detector import parse_bsl_path
 from rlm_tools_bsl.helpers import _SKIP_DIRS
 
 
@@ -28,9 +29,9 @@ class ExtensionInfo:
     path: str
     role: ConfigRole
     name: str = ""
-    purpose: str = ""           # "AddOn", "Customization", "Fix", ""
+    purpose: str = ""  # "AddOn", "Customization", "Fix", ""
     name_prefix: str = ""
-    source_format: str = ""     # "cf" or "edt"
+    source_format: str = ""  # "cf" or "edt"
 
 
 @dataclass
@@ -63,6 +64,7 @@ _PROC_DEF_RE = re.compile(
 # ---------------------------------------------------------------------------
 # CF format (Configuration.xml under default namespace)
 # ---------------------------------------------------------------------------
+
 
 def _parse_config_xml(xml_path: str, directory: str) -> ExtensionInfo | None:
     """Parse CF-format Configuration.xml and determine role."""
@@ -121,6 +123,7 @@ def _el_text(parent, tag: str, ns: dict) -> str:
 # EDT format (Configuration.mdo under mdclass namespace)
 # ---------------------------------------------------------------------------
 
+
 def _parse_config_mdo(mdo_path: str, directory: str) -> ExtensionInfo | None:
     """Parse EDT-format Configuration.mdo and determine role."""
     try:
@@ -177,6 +180,7 @@ def _local_tag(tag: str) -> str:
 # ---------------------------------------------------------------------------
 # Single-directory detection
 # ---------------------------------------------------------------------------
+
 
 def _detect_single(directory: str) -> ExtensionInfo | None:
     """Detect whether *directory* is a 1C configuration (main or extension).
@@ -253,6 +257,7 @@ def _scan_for_mdo(base: Path, directory: str) -> ExtensionInfo | None:
 # Context detection (main entry point)
 # ---------------------------------------------------------------------------
 
+
 def detect_extension_context(base_path: str) -> ExtensionContext:
     """Detect extension context for *base_path*.
 
@@ -261,7 +266,8 @@ def detect_extension_context(base_path: str) -> ExtensionContext:
     3. Generates warnings for the AI agent.
     """
     current = _detect_single(base_path) or ExtensionInfo(
-        path=base_path, role=ConfigRole.UNKNOWN,
+        path=base_path,
+        role=ConfigRole.UNKNOWN,
     )
 
     siblings: list[ExtensionInfo] = []
@@ -295,8 +301,7 @@ def detect_extension_context(base_path: str) -> ExtensionContext:
             info = _detect_single(str(resolved_entry))
             if info is not None:
                 # Avoid duplicates (same resolved path)
-                if not any(Path(s.path).resolve() == Path(info.path).resolve()
-                           for s in siblings):
+                if not any(Path(s.path).resolve() == Path(info.path).resolve() for s in siblings):
                     siblings.append(info)
                     found_any = True
 
@@ -329,8 +334,7 @@ def _build_warnings(
 
     if current.role == ConfigRole.MAIN and nearby_extensions:
         ext_list = ", ".join(
-            f"{e.name or '?'} ({e.purpose or '?'}, "
-            f"prefix: {e.name_prefix or '—'}, path: {e.path})"
+            f"{e.name or '?'} ({e.purpose or '?'}, prefix: {e.name_prefix or '—'}, path: {e.path})"
             for e in nearby_extensions
         )
         warnings.append(
@@ -348,10 +352,7 @@ def _build_warnings(
             "Analysis without the main config may be incomplete or misleading."
         )
         if nearby_main:
-            warnings.append(
-                f"Main config found nearby: "
-                f"{nearby_main.name or '?'} ({nearby_main.path})"
-            )
+            warnings.append(f"Main config found nearby: {nearby_main.name or '?'} ({nearby_main.path})")
 
     return warnings
 
@@ -359,6 +360,7 @@ def _build_warnings(
 # ---------------------------------------------------------------------------
 # Targeted override scanning
 # ---------------------------------------------------------------------------
+
 
 def find_extension_overrides(
     extension_path: str,
@@ -383,10 +385,7 @@ def find_extension_overrides(
     results: list[dict] = []
 
     for dirpath, dirnames, filenames in os.walk(ext_base):
-        dirnames[:] = [
-            d for d in dirnames
-            if d not in _SKIP_DIRS and not d.startswith(".")
-        ]
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
         for fname in filenames:
             if not fname.endswith(".bsl"):
                 continue
@@ -438,12 +437,14 @@ def _scan_bsl_for_annotations(
                 extension_method = pm.group(1)
                 break
 
-        results.append({
-            "annotation": annotation,
-            "target_method": target_method,
-            "extension_method": extension_method,
-            "module_path": rel_path,
-            "object_name": bsl_info.object_name or "",
-            "module_type": bsl_info.module_type or "",
-            "line": i + 1,
-        })
+        results.append(
+            {
+                "annotation": annotation,
+                "target_method": target_method,
+                "extension_method": extension_method,
+                "module_path": rel_path,
+                "object_name": bsl_info.object_name or "",
+                "module_type": bsl_info.module_type or "",
+                "line": i + 1,
+            }
+        )

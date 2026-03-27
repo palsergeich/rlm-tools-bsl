@@ -1,4 +1,5 @@
 """Tests for _config.load_project_env()."""
+
 from __future__ import annotations
 
 import json
@@ -41,6 +42,7 @@ class TestLoadProjectEnv:
         monkeypatch.setenv("RLM_CONFIG_FILE", str(cfg_path))
 
         from rlm_tools_bsl._config import load_project_env
+
         result = load_project_env()
 
         assert result == str(env_path)
@@ -53,6 +55,7 @@ class TestLoadProjectEnv:
         _write_service_json(svc_json, env_file=str(env_path))
 
         import rlm_tools_bsl._config as cfg_mod
+
         monkeypatch.setattr(cfg_mod, "SERVICE_JSON", svc_json)
         monkeypatch.setattr(cfg_mod, "CONFIG_DIR", svc_json.parent)
 
@@ -65,6 +68,7 @@ class TestLoadProjectEnv:
         _write_dotenv(config_dir / ".env")
 
         import rlm_tools_bsl._config as cfg_mod
+
         monkeypatch.setattr(cfg_mod, "SERVICE_JSON", config_dir / "nonexistent.json")
         monkeypatch.setattr(cfg_mod, "CONFIG_DIR", config_dir)
 
@@ -77,6 +81,7 @@ class TestLoadProjectEnv:
         monkeypatch.chdir(tmp_path)
 
         import rlm_tools_bsl._config as cfg_mod
+
         monkeypatch.setattr(cfg_mod, "SERVICE_JSON", tmp_path / "nonexistent.json")
         monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path / "nonexistent_dir")
 
@@ -88,6 +93,7 @@ class TestLoadProjectEnv:
         monkeypatch.chdir(tmp_path)
 
         import rlm_tools_bsl._config as cfg_mod
+
         monkeypatch.setattr(cfg_mod, "SERVICE_JSON", tmp_path / "no.json")
         monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path / "nodir")
 
@@ -104,6 +110,7 @@ class TestLoadProjectEnv:
         monkeypatch.chdir(tmp_path)
 
         import rlm_tools_bsl._config as cfg_mod
+
         monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path / "nodir")
 
         result = cfg_mod.load_project_env()
@@ -116,6 +123,7 @@ class TestLoadProjectEnv:
         monkeypatch.chdir(tmp_path)
 
         import rlm_tools_bsl._config as cfg_mod
+
         monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path / "nodir")
 
         result = cfg_mod.load_project_env()
@@ -131,6 +139,7 @@ class TestSaveConfigOverride:
         monkeypatch.setenv("RLM_CONFIG_FILE", str(override_path))
 
         import rlm_tools_bsl.service as svc_mod
+
         svc_mod.save_config("0.0.0.0", 8080, None)
 
         assert override_path.exists()
@@ -144,6 +153,7 @@ class TestSaveConfigOverride:
         monkeypatch.delenv("RLM_CONFIG_FILE", raising=False)
 
         import rlm_tools_bsl.service as svc_mod
+
         monkeypatch.setattr(svc_mod, "CONFIG_FILE", default_cfg)
 
         svc_mod.save_config("127.0.0.1", 9000, None)

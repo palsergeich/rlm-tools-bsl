@@ -1,4 +1,5 @@
 """Disk cache for BSL file index stored in ~/.cache/rlm-tools-bsl/<hash>/."""
+
 from __future__ import annotations
 
 import hashlib

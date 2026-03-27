@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pytest
 from types import SimpleNamespace
 
-from test_bsl_helpers import _make_bsl_fixture, _create_cf_fixture
+from test_bsl_helpers import _make_bsl_fixture
 
 
 @pytest.fixture

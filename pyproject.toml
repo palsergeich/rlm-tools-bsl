@@ -45,6 +45,7 @@ dev = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "ruff>=0.15.8",
 ]
 service = [
     "pywin32>=306; sys_platform == 'win32'",
@@ -52,6 +53,15 @@ service = [
 
 [tool.pytest.ini_options]
 pythonpath = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+per-file-ignores = {"src/rlm_tools_bsl/bsl_helpers.py" = ["E402"], "src/rlm_tools_bsl/server.py" = ["E402"]}
 
 [project.urls]
 Homepage = "https://github.com/Dach-Coin/rlm-tools-bsl"

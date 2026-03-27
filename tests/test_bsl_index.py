@@ -3,7 +3,7 @@
 Tests IndexBuilder, IndexReader, incremental updates, freshness checks,
 and path/env helpers.
 """
-import os
+
 import sqlite3
 import time
 
@@ -85,6 +85,7 @@ MANAGER_MODULE_BSL = """\
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def tmp_bsl_project(tmp_path):
     """Create a temporary CF-format BSL project structure.
@@ -139,26 +140,19 @@ def built_index_no_calls(tmp_bsl_project, monkeypatch):
 # IndexBuilder tests
 # =====================================================================
 
-class TestIndexBuilder:
 
+class TestIndexBuilder:
     def test_build_creates_db(self, built_index):
         """build() creates a .db file with all 4 tables (meta + 3 data)."""
         db_path, _ = built_index
         assert db_path.exists(), "Database file should exist after build"
 
         conn = sqlite3.connect(str(db_path))
-        tables = {
-            row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         conn.close()
 
         expected_tables = {"index_meta", "modules", "methods", "calls"}
-        assert expected_tables.issubset(tables), (
-            f"Expected tables {expected_tables}, found {tables}"
-        )
+        assert expected_tables.issubset(tables), f"Expected tables {expected_tables}, found {tables}"
 
     def test_build_no_calls(self, built_index_no_calls):
         """build(build_calls=False) creates DB without calls data."""
@@ -172,9 +166,7 @@ class TestIndexBuilder:
         assert row["cnt"] == 0, "calls table should be empty when build_calls=False"
 
         # Verify meta records it
-        meta_row = conn.execute(
-            "SELECT value FROM index_meta WHERE key = 'has_calls'"
-        ).fetchone()
+        meta_row = conn.execute("SELECT value FROM index_meta WHERE key = 'has_calls'").fetchone()
         assert meta_row["value"] == "0"
 
         conn.close()
@@ -241,9 +233,7 @@ class TestIndexBuilder:
 
         conn = sqlite3.connect(str(db_path))
         total = conn.execute("SELECT COUNT(*) FROM methods").fetchone()[0]
-        unique = conn.execute(
-            "SELECT COUNT(*) FROM (SELECT DISTINCT module_id, name, line FROM methods)"
-        ).fetchone()[0]
+        unique = conn.execute("SELECT COUNT(*) FROM (SELECT DISTINCT module_id, name, line FROM methods)").fetchone()[0]
         conn.close()
 
         assert total == unique, "There should be no duplicate (module_id, name, line) entries"
@@ -289,8 +279,8 @@ class TestIndexBuilder:
 # IndexReader tests
 # =====================================================================
 
-class TestIndexReader:
 
+class TestIndexReader:
     def test_reader_get_methods_by_path(self, built_index):
         """get_methods_by_path returns correct list of dicts for a known module."""
         db_path, _ = built_index
@@ -298,9 +288,7 @@ class TestIndexReader:
         try:
             # Find the rel_path for the common module
             conn = sqlite3.connect(str(db_path))
-            rel_paths = [
-                r[0] for r in conn.execute("SELECT rel_path FROM modules").fetchall()
-            ]
+            rel_paths = [r[0] for r in conn.execute("SELECT rel_path FROM modules").fetchall()]
             conn.close()
 
             cm_path = [p for p in rel_paths if "CommonModules" in p][0]
@@ -442,7 +430,6 @@ class TestIndexReader:
         reader = IndexReader(db_path)
         try:
             result = reader.get_callers("ЗаполнитьТабличнуюЧасть")
-            callee_names = {c.get("file") for c in result["callers"]}
             # Should find the call from ObjectModule (МойМодуль.ЗаполнитьТабличнуюЧасть)
             assert result["_meta"]["total_callers"] >= 1
         finally:
@@ -454,9 +441,7 @@ class TestIndexReader:
         reader = IndexReader(db_path)
         try:
             conn = sqlite3.connect(str(db_path))
-            rel_paths = [
-                r[0] for r in conn.execute("SELECT rel_path FROM modules").fetchall()
-            ]
+            rel_paths = [r[0] for r in conn.execute("SELECT rel_path FROM modules").fetchall()]
             conn.close()
 
             cm_path = [p for p in rel_paths if "CommonModules" in p][0]
@@ -524,6 +509,7 @@ class TestIndexReader:
 # FTS5 full-text search tests
 # =====================================================================
 
+
 class TestFTS:
     """Tests for FTS5 trigram-based full-text search of methods."""
 
@@ -547,12 +533,7 @@ class TestFTS:
         """FTS virtual table exists after build with build_fts=True."""
         db_path, _ = built_index_fts
         conn = sqlite3.connect(str(db_path))
-        tables = {
-            row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         conn.close()
         assert "methods_fts" in tables
 
@@ -617,8 +598,17 @@ class TestFTS:
             results = reader.search_methods("Заполнить")
             assert len(results) > 0
             r = results[0]
-            expected_keys = {"name", "type", "is_export", "line", "end_line",
-                             "params", "module_path", "object_name", "rank"}
+            expected_keys = {
+                "name",
+                "type",
+                "is_export",
+                "line",
+                "end_line",
+                "params",
+                "module_path",
+                "object_name",
+                "rank",
+            }
             assert set(r.keys()) == expected_keys
         finally:
             reader.close()
@@ -627,12 +617,7 @@ class TestFTS:
         """--no-fts flag skips FTS table creation."""
         db_path, _ = built_index_no_fts
         conn = sqlite3.connect(str(db_path))
-        tables = {
-            row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         conn.close()
         assert "methods_fts" not in tables
 
@@ -695,16 +680,12 @@ MODIFIED_MODULE_BSL = """\
 
 
 class TestIncrementalUpdate:
-
     def test_update_new_file(self, built_index, monkeypatch):
         """Adding a new .bsl file and running update makes it appear in the index."""
         db_path, base_path = built_index
 
         # Add a new file
-        new_dir = (
-            tmp_path_from_base(base_path)
-            / "Catalogs" / "НовыйСправочник" / "Ext"
-        )
+        new_dir = tmp_path_from_base(base_path) / "Catalogs" / "НовыйСправочник" / "Ext"
         new_dir.mkdir(parents=True)
         (new_dir / "ObjectModule.bsl").write_text(NEW_FILE_BSL, encoding="utf-8-sig")
 
@@ -719,9 +700,7 @@ class TestIncrementalUpdate:
         conn.close()
 
         rel_paths = [r[0] for r in rows]
-        assert any("НовыйСправочник" in p for p in rel_paths), (
-            f"New module not found. All paths: {rel_paths}"
-        )
+        assert any("НовыйСправочник" in p for p in rel_paths), f"New module not found. All paths: {rel_paths}"
 
     def test_update_changed_file(self, built_index, monkeypatch):
         """Modifying an existing .bsl file and running update refreshes methods."""
@@ -733,9 +712,7 @@ class TestIncrementalUpdate:
         # Count methods before
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
-        mod_row = conn.execute(
-            "SELECT id FROM modules WHERE rel_path LIKE '%ManagerModule%'"
-        ).fetchone()
+        mod_row = conn.execute("SELECT id FROM modules WHERE rel_path LIKE '%ManagerModule%'").fetchone()
         methods_before = conn.execute(
             "SELECT COUNT(*) AS cnt FROM methods WHERE module_id = ?",
             (mod_row["id"],),
@@ -757,9 +734,7 @@ class TestIncrementalUpdate:
         # Verify methods refreshed
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
-        mod_row = conn.execute(
-            "SELECT id FROM modules WHERE rel_path LIKE '%ManagerModule%'"
-        ).fetchone()
+        mod_row = conn.execute("SELECT id FROM modules WHERE rel_path LIKE '%ManagerModule%'").fetchone()
         methods_after = conn.execute(
             "SELECT COUNT(*) AS cnt FROM methods WHERE module_id = ?",
             (mod_row["id"],),
@@ -783,9 +758,7 @@ class TestIncrementalUpdate:
 
         # Verify module removed from DB
         conn = sqlite3.connect(str(db_path))
-        rows = conn.execute(
-            "SELECT rel_path FROM modules WHERE rel_path LIKE '%ManagerModule%'"
-        ).fetchall()
+        rows = conn.execute("SELECT rel_path FROM modules WHERE rel_path LIKE '%ManagerModule%'").fetchall()
         conn.close()
 
         assert len(rows) == 0, "Removed file should not be in modules table"
@@ -831,8 +804,8 @@ class TestIncrementalUpdate:
 # Staleness / freshness tests
 # =====================================================================
 
-class TestFreshness:
 
+class TestFreshness:
     def test_freshness_fresh(self, built_index):
         """Immediately after build, freshness check returns FRESH."""
         db_path, base_path = built_index
@@ -891,8 +864,8 @@ class TestFreshness:
 # check_index_usable tests (lightweight, no rglob)
 # =====================================================================
 
-class TestCheckIndexUsable:
 
+class TestCheckIndexUsable:
     def test_usable_fresh(self, built_index):
         """Immediately after build, usable check returns FRESH."""
         db_path, base_path = built_index
@@ -930,8 +903,7 @@ class TestCheckIndexUsable:
 
         # Modify all BSL files to trigger mtime mismatch
         for bsl in base.rglob("*.bsl"):
-            bsl.write_text(bsl.read_text(encoding="utf-8-sig") + "\n// changed",
-                          encoding="utf-8-sig")
+            bsl.write_text(bsl.read_text(encoding="utf-8-sig") + "\n// changed", encoding="utf-8-sig")
 
         status = check_index_usable(db_path, base_path)
         assert status == IndexStatus.STALE_CONTENT
@@ -955,7 +927,6 @@ class TestCheckIndexUsable:
 
 
 class TestCheckIndexStrict:
-
     def test_strict_is_alias(self):
         """check_index_freshness is an alias for check_index_strict."""
         assert check_index_freshness is check_index_strict
@@ -993,7 +964,6 @@ class TestCheckIndexStrict:
 
 
 class TestBslCountInStats:
-
     def test_statistics_include_bsl_count(self, built_index):
         """get_statistics() returns bsl_count as int from index_meta."""
         db_path, base_path = built_index
@@ -1007,7 +977,6 @@ class TestBslCountInStats:
 
 
 class TestGetAllModules:
-
     def test_get_all_modules_returns_all(self, built_index):
         """get_all_modules() returns all modules with correct fields."""
         db_path, base_path = built_index
@@ -1038,8 +1007,8 @@ class TestGetAllModules:
 # ENV / path helper tests
 # =====================================================================
 
-class TestPathHelpers:
 
+class TestPathHelpers:
     def test_index_dir_from_env(self, monkeypatch, tmp_path):
         """RLM_INDEX_DIR env var overrides default index directory."""
         custom_dir = str(tmp_path / "custom_index")
@@ -1053,6 +1022,7 @@ class TestPathHelpers:
         monkeypatch.delenv("RLM_INDEX_DIR", raising=False)
 
         from pathlib import Path
+
         result = get_index_dir("/some/base")
         expected = Path.home() / ".cache" / "rlm-tools-bsl"
         assert result == expected
@@ -1062,13 +1032,12 @@ class TestPathHelpers:
         monkeypatch.setenv("RLM_INDEX_DIR", str(tmp_path))
 
         import hashlib
+
         base = "/my/project/path"
         expected_hash = hashlib.md5(base.encode()).hexdigest()[:12]
 
         result = get_index_db_path(base)
-        assert expected_hash in str(result), (
-            f"Expected hash {expected_hash} in path {result}"
-        )
+        assert expected_hash in str(result), f"Expected hash {expected_hash} in path {result}"
         assert result.name == "method_index.db"
 
 
@@ -1076,7 +1045,9 @@ class TestPathHelpers:
 # Helper for resolving pathlib.Path from base_path string
 # ---------------------------------------------------------------------------
 
+
 def tmp_path_from_base(base_path: str):
     """Convert base_path string back to pathlib.Path."""
     from pathlib import Path
+
     return Path(base_path)

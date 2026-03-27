@@ -2,7 +2,7 @@ import os
 import tempfile
 
 from rlm_tools_bsl.helpers import make_helpers
-from rlm_tools_bsl.format_detector import FormatInfo, SourceFormat, detect_format
+from rlm_tools_bsl.format_detector import detect_format
 from rlm_tools_bsl.bsl_helpers import (
     make_bsl_helpers,
     parse_metadata_xml,
@@ -89,6 +89,7 @@ def _make_bsl_fixture(tmpdir):
 
 # --- find_module ---
 
+
 def test_find_module_by_name(bsl_env):
     results = bsl_env.bsl["find_module"]("МойМодуль")
     assert len(results) >= 1
@@ -112,6 +113,7 @@ def test_find_module_no_results(bsl_env):
 
 # --- find_by_type ---
 
+
 def test_find_by_type(bsl_env):
     results = bsl_env.bsl["find_by_type"]("Documents")
     assert len(results) >= 1
@@ -124,6 +126,7 @@ def test_find_by_type_with_name(bsl_env):
 
 
 # --- extract_procedures ---
+
 
 def test_extract_procedures(bsl_env):
     # Find the module path first
@@ -162,6 +165,7 @@ def test_extract_procedures_has_end_line(bsl_env):
 
 # --- find_exports ---
 
+
 def test_find_exports(bsl_env):
     modules = bsl_env.bsl["find_module"]("МойМодуль")
     path = modules[0]["path"]
@@ -175,6 +179,7 @@ def test_find_exports(bsl_env):
 
 
 # --- safe_grep ---
+
 
 def test_safe_grep_with_hint(bsl_env):
     results = bsl_env.bsl["safe_grep"]("ЗаполнитьДанные", name_hint="АвансовыйОтчет")
@@ -199,6 +204,7 @@ def test_safe_grep_parallel_order(bsl_env):
 
 # --- read_procedure ---
 
+
 def test_read_procedure(bsl_env):
     modules = bsl_env.bsl["find_module"]("МойМодуль")
     path = modules[0]["path"]
@@ -218,6 +224,7 @@ def test_read_procedure_not_found(bsl_env):
 
 
 # --- find_callers ---
+
 
 def test_find_callers(bsl_env):
     results = bsl_env.bsl["find_callers"]("ЗаполнитьДанные")
@@ -514,7 +521,6 @@ def test_parse_object_xml_via_sandbox():
         # Write a metadata XML file
         xml_dir = os.path.join(tmpdir, "Catalogs", "ВидыСО")
         os.makedirs(xml_dir)
-        xml_path = os.path.join(xml_dir, "Ext", "ObjectModule.bsl")
         # Write the XML at the catalog level
         with open(os.path.join(xml_dir, "ВидыСО.xml"), "w", encoding="utf-8") as f:
             f.write(CATALOG_XML)
@@ -562,6 +568,7 @@ def test_parse_object_xml_directory_path():
 
 
 # --- MDO format tests ---
+
 
 def test_parse_mdo_document():
     result = parse_metadata_xml(MDO_DOCUMENT_XML)
@@ -611,6 +618,7 @@ def test_parse_mdo_subsystem():
 
 
 # --- find_callers_context ---
+
 
 def test_find_callers_context_basic(bsl_env):
     """Basic: finds caller with all required fields."""
@@ -675,10 +683,7 @@ def test_find_callers_context_qualified_call(bsl_env):
     result = bsl_env.bsl["find_callers_context"]("ЗаполнитьДанные")
     callers = result["callers"]
     # The call is МойМодуль.ЗаполнитьДанные(1, 2) — should be found
-    assert any(
-        "МойМодуль.ЗаполнитьДанные" in c["context"]
-        for c in callers
-    )
+    assert any("МойМодуль.ЗаполнитьДанные" in c["context"] for c in callers)
 
 
 def test_find_callers_context_meta(bsl_env):
@@ -734,7 +739,11 @@ def _make_subsystem_fixture(tmpdir):
     """Create fixture with a subsystem XML."""
     # Add subsystem XML to existing fixture
     sub_dir = os.path.join(
-        tmpdir, "Subsystems", "Администрирование", "Subsystems", "ктнСпецодежда",
+        tmpdir,
+        "Subsystems",
+        "Администрирование",
+        "Subsystems",
+        "ктнСпецодежда",
     )
     os.makedirs(sub_dir, exist_ok=True)
     with open(os.path.join(sub_dir, "ктнСпецодежда.xml"), "w", encoding="utf-8") as f:
@@ -874,8 +883,8 @@ def test_resolve_object_xml_edt_mdo():
                 '<?xml version="1.0" encoding="UTF-8"?>\n'
                 '<mdclass:Document xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass"'
                 ' uuid="00000000-0000-0000-0000-000000000001">\n'
-                '  <name>ТестДок</name>\n'
-                '</mdclass:Document>\n'
+                "  <name>ТестДок</name>\n"
+                "</mdclass:Document>\n"
             )
         # Also create a BSL file so find_module works
         bsl_dir = os.path.join(doc_dir)
@@ -1083,6 +1092,7 @@ RIGHTS_XML = """\
 
 # === Enum / FunctionalOption / Rights XML parser tests ===
 
+
 def test_parse_enum_xml_cf():
     result = parse_enum_xml(ENUM_CF_XML)
     assert result is not None
@@ -1146,6 +1156,7 @@ def test_parse_rights_xml_filter():
 
 
 # === Integration tests for find_enum_values, find_functional_options, find_roles ===
+
 
 def test_find_enum_values():
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -1509,6 +1520,7 @@ def test_help_flow():
 
 # === Task 5: find_based_on_documents ===
 
+
 def test_find_based_on_documents():
     with tempfile.TemporaryDirectory() as tmpdir:
         bsl, _ = _make_full_fixture(tmpdir)
@@ -1532,6 +1544,7 @@ def test_find_based_on_documents_no_manager():
 
 # === Task 6: find_print_forms ===
 
+
 def test_find_print_forms():
     with tempfile.TemporaryDirectory() as tmpdir:
         bsl, _ = _make_full_fixture(tmpdir)
@@ -1554,6 +1567,7 @@ def test_find_print_forms_not_found():
 
 # === Task 7: find_register_movements ERP framework fallback ===
 
+
 def test_find_register_movements_erp_framework():
     with tempfile.TemporaryDirectory() as tmpdir:
         doc_dir = os.path.join(tmpdir, "Documents", "РеализацияТоваров", "Ext")
@@ -1567,6 +1581,7 @@ def test_find_register_movements_erp_framework():
 
         from rlm_tools_bsl.helpers import make_helpers
         from rlm_tools_bsl.format_detector import detect_format
+
         helpers, resolve_safe = make_helpers(tmpdir)
         format_info = detect_format(tmpdir)
         bsl = make_bsl_helpers(
@@ -1591,6 +1606,7 @@ def test_find_register_movements_erp_framework():
 
 
 # === Task 8: help recipes for new helpers ===
+
 
 def test_help_based_on():
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -1628,6 +1644,7 @@ def test_help_functional_options():
 
 
 # === Auto-strip metadata type prefix ===
+
 
 def test_strip_meta_prefix_find_module(bsl_env):
     # With prefix
@@ -1727,6 +1744,7 @@ def test_find_event_subscriptions_catchall():
 
 # === custom_only parameter ===
 
+
 def test_find_event_subscriptions_custom_only():
     """custom_only=True should filter by auto-detected prefixes."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -1774,6 +1792,7 @@ def test_find_event_subscriptions_custom_only():
 
 # ── extract_queries tests ─────────────────────────────────────
 
+
 def test_extract_queries_basic():
     with tempfile.TemporaryDirectory() as tmpdir:
         bsl, _ = _make_bsl_fixture(tmpdir)
@@ -1782,15 +1801,15 @@ def test_extract_queries_basic():
         bsl_path = os.path.join(mod_dir, "ObjectModule.bsl")
         with open(bsl_path, "w", encoding="utf-8-sig") as f:
             f.write(
-                'Процедура ОбработкаПроведения(Отказ)\n'
-                '    Запрос = Новый Запрос;\n'
+                "Процедура ОбработкаПроведения(Отказ)\n"
+                "    Запрос = Новый Запрос;\n"
                 '    Запрос.Текст = "ВЫБРАТЬ\n'
-                '    |    Т.Ссылка\n'
-                '    |ИЗ\n'
-                '    |    РегистрНакопления.ТоварыНаСкладах КАК Т\n'
-                '    |    СОЕДИНЕНИЕ Справочник.Номенклатура КАК Н\n'
+                "    |    Т.Ссылка\n"
+                "    |ИЗ\n"
+                "    |    РегистрНакопления.ТоварыНаСкладах КАК Т\n"
+                "    |    СОЕДИНЕНИЕ Справочник.Номенклатура КАК Н\n"
                 '    |    ПО Т.Номенклатура = Н.Ссылка";\n'
-                'КонецПроцедуры\n'
+                "КонецПроцедуры\n"
             )
         rel_path = os.path.relpath(bsl_path, tmpdir).replace("\\", "/")
         queries = bsl["extract_queries"](rel_path)
@@ -1813,6 +1832,7 @@ def test_extract_queries_no_queries():
 
 # ── code_metrics tests ────────────────────────────────────────
 
+
 def test_code_metrics_basic():
     with tempfile.TemporaryDirectory() as tmpdir:
         bsl, _ = _make_bsl_fixture(tmpdir)
@@ -1821,19 +1841,19 @@ def test_code_metrics_basic():
         bsl_path = os.path.join(mod_dir, "Module.bsl")
         with open(bsl_path, "w", encoding="utf-8-sig") as f:
             f.write(
-                '// Комментарий\n'
-                '\n'
-                'Процедура Тест1() Экспорт\n'
-                '    Если Истина Тогда\n'
-                '        Для Каждого Элемент Из Список Цикл\n'
-                '            Сообщить(Элемент);\n'
-                '        КонецЦикла;\n'
-                '    КонецЕсли;\n'
-                'КонецПроцедуры\n'
-                '\n'
-                'Функция Тест2()\n'
-                '    Возврат 1;\n'
-                'КонецФункции\n'
+                "// Комментарий\n"
+                "\n"
+                "Процедура Тест1() Экспорт\n"
+                "    Если Истина Тогда\n"
+                "        Для Каждого Элемент Из Список Цикл\n"
+                "            Сообщить(Элемент);\n"
+                "        КонецЦикла;\n"
+                "    КонецЕсли;\n"
+                "КонецПроцедуры\n"
+                "\n"
+                "Функция Тест2()\n"
+                "    Возврат 1;\n"
+                "КонецФункции\n"
             )
         rel_path = os.path.relpath(bsl_path, tmpdir).replace("\\", "/")
         m = bsl["code_metrics"](rel_path)
@@ -1871,7 +1891,6 @@ def _make_bsl_fixture_authoritative(tmpdir, authoritative=False):
 
 def test_authoritative_true_index_hit():
     """authoritative=True + index returns callers -> result without fallback."""
-    from unittest.mock import MagicMock
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -1885,7 +1904,7 @@ def test_authoritative_true_index_hit():
 
 def test_authoritative_true_zero_callers():
     """authoritative=True + index returns 0 callers -> fallback skipped."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmpdir:

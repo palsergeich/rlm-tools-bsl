@@ -12,7 +12,6 @@ from rlm_tools_bsl.cache import load_index, save_index
 
 logger = logging.getLogger(__name__)
 from rlm_tools_bsl.bsl_xml_parsers import (
-    _CATEGORY_ALIASES,
     _normalize_category,
     parse_metadata_xml,
     parse_event_subscription_xml,
@@ -25,6 +24,7 @@ from rlm_tools_bsl.bsl_xml_parsers import (
 
 class LazyList:
     """Thread-safe lazy-init list with double-check locking."""
+
     __slots__ = ("data", "_built", "_lock")
 
     def __init__(self):
@@ -44,6 +44,7 @@ class LazyList:
 
 class LazyDict:
     """Thread-safe per-key lazy cache with double-check locking."""
+
     __slots__ = ("data", "_lock")
 
     def __init__(self):
@@ -61,12 +62,12 @@ class LazyDict:
 
 def make_bsl_helpers(
     base_path: str,
-    resolve_safe,      # callable: str -> pathlib.Path
-    read_file_fn,      # callable: str -> str
-    grep_fn,           # callable: (pattern, path) -> list[dict]
-    glob_files_fn,     # callable: (pattern) -> list[str]
+    resolve_safe,  # callable: str -> pathlib.Path
+    read_file_fn,  # callable: str -> str
+    grep_fn,  # callable: (pattern, path) -> list[dict]
+    glob_files_fn,  # callable: (pattern) -> list[str]
     format_info: FormatInfo | None = None,
-    idx_reader=None,   # optional IndexReader for SQLite index acceleration
+    idx_reader=None,  # optional IndexReader for SQLite index acceleration
     idx_zero_callers_authoritative: bool = False,
 ) -> dict:
     """Creates BSL helper functions for sandbox namespace.
@@ -74,7 +75,7 @@ def make_bsl_helpers(
     If idx_reader is provided, helpers use it as a fast path with fallback."""
 
     # Mutable closure state for lazy index
-    _index_state: list = []          # list of tuples (relative_path, BslFileInfo)
+    _index_state: list = []  # list of tuples (relative_path, BslFileInfo)
     _index_built: list[bool] = [False]
     _index_lock = threading.Lock()
 
@@ -142,7 +143,7 @@ def make_bsl_helpers(
             # Custom objects start with a lowercase letter in 1C conventions.
             # Extract prefix: sequence of lowercase letters (+ optional _) before
             # the first uppercase letter.
-            prefix_re = re.compile(r'^([a-zа-яё]+_?)')
+            prefix_re = re.compile(r"^([a-zа-яё]+_?)")
             prefix_counts: dict[str, int] = {}
             for name in object_names:
                 if not name or not name[0].islower():
@@ -177,27 +178,55 @@ def make_bsl_helpers(
     # --- Strip 1C metadata type prefixes from object names ---
     # Models often pass "Документ.РеализацияТоваровУслуг" instead of "РеализацияТоваровУслуг"
     _META_TYPE_PREFIXES = (
-        "Документ.", "Справочник.", "Перечисление.", "РегистрСведений.",
-        "РегистрНакопления.", "РегистрБухгалтерии.", "РегистрРасчета.",
-        "Отчет.", "Обработка.", "ПланОбмена.", "ПланСчетов.",
-        "ПланВидовХарактеристик.", "ПланВидовРасчета.", "БизнесПроцесс.",
-        "Задача.", "Константа.", "ПодпискаНаСобытие.", "РегламентноеЗадание.",
-        "Document.", "Catalog.", "Enum.", "InformationRegister.",
-        "AccumulationRegister.", "AccountingRegister.", "CalculationRegister.",
-        "Report.", "DataProcessor.", "ExchangePlan.", "ChartOfAccounts.",
-        "ChartOfCharacteristicTypes.", "ChartOfCalculationTypes.",
-        "BusinessProcess.", "Task.", "Constant.",
-        "DocumentObject.", "CatalogObject.",
-        "DocumentRef.", "CatalogRef.",
-        "ДокументОбъект.", "СправочникОбъект.",
-        "ДокументСсылка.", "СправочникСсылка.",
+        "Документ.",
+        "Справочник.",
+        "Перечисление.",
+        "РегистрСведений.",
+        "РегистрНакопления.",
+        "РегистрБухгалтерии.",
+        "РегистрРасчета.",
+        "Отчет.",
+        "Обработка.",
+        "ПланОбмена.",
+        "ПланСчетов.",
+        "ПланВидовХарактеристик.",
+        "ПланВидовРасчета.",
+        "БизнесПроцесс.",
+        "Задача.",
+        "Константа.",
+        "ПодпискаНаСобытие.",
+        "РегламентноеЗадание.",
+        "Document.",
+        "Catalog.",
+        "Enum.",
+        "InformationRegister.",
+        "AccumulationRegister.",
+        "AccountingRegister.",
+        "CalculationRegister.",
+        "Report.",
+        "DataProcessor.",
+        "ExchangePlan.",
+        "ChartOfAccounts.",
+        "ChartOfCharacteristicTypes.",
+        "ChartOfCalculationTypes.",
+        "BusinessProcess.",
+        "Task.",
+        "Constant.",
+        "DocumentObject.",
+        "CatalogObject.",
+        "DocumentRef.",
+        "CatalogRef.",
+        "ДокументОбъект.",
+        "СправочникОбъект.",
+        "ДокументСсылка.",
+        "СправочникСсылка.",
     )
 
     def _strip_meta_prefix(name: str) -> str:
         """Strip 1C metadata type prefix if present: 'Документ.X' -> 'X'."""
         for prefix in _META_TYPE_PREFIXES:
             if name.startswith(prefix):
-                return name[len(prefix):]
+                return name[len(prefix) :]
         return name
 
     def _info_to_dict(relative_path: str, info: BslFileInfo) -> dict:
@@ -212,12 +241,14 @@ def make_bsl_helpers(
     # ── Helper registry ──────────────────────────────────────────
     _registry: dict[str, dict] = {}
 
-    def _reg(name: str, fn, sig: str, cat: str,
-             kw: list[str] | None = None, recipe: str = ""):
+    def _reg(name: str, fn, sig: str, cat: str, kw: list[str] | None = None, recipe: str = ""):
         """Register a helper: sig for strategy table, kw+recipe for help()."""
         _registry[name] = {
-            "fn": fn, "sig": sig, "cat": cat,
-            "kw": kw or [], "recipe": recipe,
+            "fn": fn,
+            "sig": sig,
+            "cat": cat,
+            "kw": kw or [],
+            "recipe": recipe,
         }
 
     def find_module(name: str) -> list[dict]:
@@ -317,12 +348,14 @@ def make_bsl_helpers(
         Uses SQLite index when available (instant), falls back to regex parsing.
 
         Returns: list of dicts {name, type, line, end_line, is_export, params}."""
+
         def _extract_with_index():
             if idx_reader is not None:
                 result = idx_reader.get_methods_by_path(path)
                 if result is not None:
                     return result
             return _parse_procedures(path)
+
         return _proc_lazy.get_or_set(path, _extract_with_index)
 
     def find_exports(path: str) -> list[dict]:
@@ -349,6 +382,7 @@ def make_bsl_helpers(
 
         if len(paths) > 1:
             from concurrent.futures import ThreadPoolExecutor as _TP
+
             with _TP(max_workers=min(8, len(paths))) as pool:
                 all_results = list(pool.map(_grep_one, paths))
             results = [m for batch in all_results for m in batch]
@@ -387,10 +421,7 @@ def make_bsl_helpers(
 
         Returns: list of dicts {file, line, text}."""
         result = find_callers_context(proc_name, module_hint, 0, max_files)
-        return [
-            {"file": c["file"], "line": c["line"], "text": c.get("context", "")}
-            for c in result["callers"]
-        ]
+        return [{"file": c["file"], "line": c["line"], "text": c.get("context", "")} for c in result["callers"]]
 
     # --- Parallel prefilter for find_callers_context ---
     _base = Path(base_path)
@@ -470,7 +501,9 @@ def make_bsl_helpers(
                 _n = len(result.get("callers", []))
                 logger.debug(
                     "find_callers_context: proc=%s source=index rows=%d time=%.2fs",
-                    proc_name, _n, _elapsed,
+                    proc_name,
+                    _n,
+                    _elapsed,
                 )
                 if _n > 0:
                     return result
@@ -481,8 +514,7 @@ def make_bsl_helpers(
                     )
                     result["_meta"]["fallback_skipped"] = True
                     result["_meta"]["hint"] = (
-                        "No callers found in call index. "
-                        "Use safe_grep(proc_name) to search for text mentions."
+                        "No callers found in call index. Use safe_grep(proc_name) to search for text mentions."
                     )
                     return result
                 # Untrusted/stale index — fall back to FS scan
@@ -493,7 +525,8 @@ def make_bsl_helpers(
             else:
                 logger.debug(
                     "find_callers_context: proc=%s source=index returned_none time=%.2fs, falling back to scan",
-                    proc_name, _elapsed,
+                    proc_name,
+                    _elapsed,
                 )
 
         _ensure_index()
@@ -530,11 +563,7 @@ def make_bsl_helpers(
         # --- Step 2: Build candidate file list ---
         if target_files is not None:
             # Scoped to specific files (non-export or form)
-            candidate_files = [
-                (rel, info)
-                for rel, info in _index_state
-                if rel in target_files
-            ]
+            candidate_files = [(rel, info) for rel, info in _index_state if rel in target_files]
         else:
             candidate_files = list(_index_state)
 
@@ -560,7 +589,7 @@ def make_bsl_helpers(
         total_files = len(filtered_files)
 
         # --- Step 4: Apply pagination ---
-        page_files = filtered_files[offset:offset + limit]
+        page_files = filtered_files[offset : offset + limit]
         scanned_files = len(page_files)
 
         # --- Step 5: Scan each file for callers ---
@@ -587,23 +616,28 @@ def make_bsl_helpers(
 
                         for pattern in call_patterns:
                             if pattern.search(cleaned):
-                                callers.append({
-                                    "file": rel,
-                                    "caller_name": proc["name"],
-                                    "caller_is_export": proc["is_export"],
-                                    "line": line_idx + 1,  # 1-based
-                                    "context": raw_line.rstrip(),
-                                    "object_name": info.object_name,
-                                    "category": info.category,
-                                    "module_type": info.module_type,
-                                })
+                                callers.append(
+                                    {
+                                        "file": rel,
+                                        "caller_name": proc["name"],
+                                        "caller_is_export": proc["is_export"],
+                                        "line": line_idx + 1,  # 1-based
+                                        "context": raw_line.rstrip(),
+                                        "object_name": info.object_name,
+                                        "category": info.category,
+                                        "module_type": info.module_type,
+                                    }
+                                )
                                 break  # one match per line is enough
             except Exception:
                 pass
 
         logger.debug(
             "find_callers_context: proc=%s source=fallback callers=%d files_scanned=%d files_total=%d",
-            proc_name, len(callers), scanned_files, total_files,
+            proc_name,
+            len(callers),
+            scanned_files,
+            total_files,
         )
         return {
             "callers": callers,
@@ -617,14 +651,20 @@ def make_bsl_helpers(
 
     # XML file names by metadata category (CF format: Ext/<name>.xml)
     _CATEGORY_XML_NAMES = {
-        "documents": "Document", "catalogs": "Catalog",
-        "informationregisters": "RecordSet", "accumulationregisters": "RecordSet",
-        "accountingregisters": "RecordSet", "calculationregisters": "RecordSet",
-        "reports": "Report", "dataprocessors": "DataProcessor",
-        "exchangeplans": "ExchangePlan", "chartsofaccounts": "ChartOfAccounts",
+        "documents": "Document",
+        "catalogs": "Catalog",
+        "informationregisters": "RecordSet",
+        "accumulationregisters": "RecordSet",
+        "accountingregisters": "RecordSet",
+        "calculationregisters": "RecordSet",
+        "reports": "Report",
+        "dataprocessors": "DataProcessor",
+        "exchangeplans": "ExchangePlan",
+        "chartsofaccounts": "ChartOfAccounts",
         "chartsofcharacteristictypes": "ChartOfCharacteristicTypes",
         "chartsofcalculationtypes": "ChartOfCalculationTypes",
-        "businessprocesses": "BusinessProcess", "tasks": "Task",
+        "businessprocesses": "BusinessProcess",
+        "tasks": "Task",
         "constants": "Constant",
     }
 
@@ -705,13 +745,15 @@ def make_bsl_helpers(
                 # matches is [] or list of dicts
                 results = []
                 for m in matches:
-                    results.append({
-                        "file": m["file"],
-                        "name": m["name"],
-                        "synonym": m["synonym"],
-                        "total_objects": len(m["matched_refs"]),
-                        "matched_refs": m["matched_refs"],
-                    })
+                    results.append(
+                        {
+                            "file": m["file"],
+                            "name": m["name"],
+                            "synonym": m["synonym"],
+                            "total_objects": len(m["matched_refs"]),
+                            "matched_refs": m["matched_refs"],
+                        }
+                    )
                 if not results:
                     return {
                         "error": f"Подсистема с '{name}' не найдена",
@@ -729,10 +771,9 @@ def make_bsl_helpers(
         for p in patterns:
             found_files.extend(glob_files_fn(p))
 
-        subsystem_files = list(dict.fromkeys(
-            f for f in found_files
-            if "Subsystem" in f and (f.endswith(".xml") or f.endswith(".mdo"))
-        ))
+        subsystem_files = list(
+            dict.fromkeys(f for f in found_files if "Subsystem" in f and (f.endswith(".xml") or f.endswith(".mdo")))
+        )
 
         if not subsystem_files:
             return {
@@ -763,15 +804,17 @@ def make_bsl_helpers(
                 else:
                     standard_objects.append(entry)
 
-            results.append({
-                "file": sf,
-                "name": meta.get("name", ""),
-                "synonym": meta.get("synonym", ""),
-                "total_objects": len(content),
-                "custom_objects": custom_objects,
-                "standard_objects": standard_objects,
-                "raw_content": content,
-            })
+            results.append(
+                {
+                    "file": sf,
+                    "name": meta.get("name", ""),
+                    "synonym": meta.get("synonym", ""),
+                    "total_objects": len(content),
+                    "custom_objects": custom_objects,
+                    "standard_objects": standard_objects,
+                    "raw_content": content,
+                }
+            )
 
         return {"subsystems_found": len(results), "subsystems": results}
 
@@ -824,14 +867,16 @@ def make_bsl_helpers(
                 pass
 
             if custom_procs or custom_regions:
-                modifications.append({
-                    "path": path,
-                    "module_type": mod.get("module_type", ""),
-                    "form_name": mod.get("form_name"),
-                    "total_procedures": len(procs),
-                    "custom_procedures": custom_procs,
-                    "custom_regions": custom_regions,
-                })
+                modifications.append(
+                    {
+                        "path": path,
+                        "module_type": mod.get("module_type", ""),
+                        "form_name": mod.get("form_name"),
+                        "total_procedures": len(procs),
+                        "custom_procedures": custom_procs,
+                        "custom_regions": custom_regions,
+                    }
+                )
 
         custom_attributes: list[dict] = []
         parse_error: str | None = None
@@ -845,11 +890,13 @@ def make_bsl_helpers(
                         custom_attributes.append(attr)
                 for ts in meta.get("tabular_sections", []):
                     if _match_prefix(ts["name"]):
-                        custom_attributes.append({
-                            "name": ts["name"],
-                            "type": "TabularSection",
-                            "synonym": ts.get("synonym", ""),
-                        })
+                        custom_attributes.append(
+                            {
+                                "name": ts["name"],
+                                "type": "TabularSection",
+                                "synonym": ts.get("synonym", ""),
+                            }
+                        )
             except Exception as exc:
                 parse_error = f"{type(exc).__name__}: {exc}"
 
@@ -896,15 +943,17 @@ def make_bsl_helpers(
             except Exception:
                 procs, exports = [], []
 
-            module_details.append({
-                "path": path,
-                "module_type": mod.get("module_type", ""),
-                "form_name": mod.get("form_name"),
-                "procedures_count": len(procs),
-                "exports_count": len(exports),
-                "procedures": procs,
-                "exports": exports,
-            })
+            module_details.append(
+                {
+                    "path": path,
+                    "module_type": mod.get("module_type", ""),
+                    "form_name": mod.get("form_name"),
+                    "procedures_count": len(procs),
+                    "exports_count": len(exports),
+                    "procedures": procs,
+                    "exports": exports,
+                }
+            )
 
         return {
             "name": obj_name,
@@ -937,19 +986,21 @@ def make_bsl_helpers(
             if len(parts) > 1:
                 module_part = parts[0]
                 if module_part.startswith("CommonModule."):
-                    module_part = module_part[len("CommonModule."):]
+                    module_part = module_part[len("CommonModule.") :]
                 handler_module = module_part
-            result.append({
-                "name": parsed["name"],
-                "synonym": parsed["synonym"],
-                "source_types": parsed["source_types"],
-                "source_count": len(parsed["source_types"]),
-                "event": parsed["event"],
-                "handler": handler,
-                "handler_module": handler_module,
-                "handler_procedure": handler_procedure,
-                "file": f,
-            })
+            result.append(
+                {
+                    "name": parsed["name"],
+                    "synonym": parsed["synonym"],
+                    "source_types": parsed["source_types"],
+                    "source_count": len(parsed["source_types"]),
+                    "event": parsed["event"],
+                    "handler": handler,
+                    "handler_module": handler_module,
+                    "handler_procedure": handler_procedure,
+                    "file": f,
+                }
+            )
         return result
 
     def _ensure_event_subscriptions() -> list[dict]:
@@ -981,20 +1032,14 @@ def make_bsl_helpers(
                 if custom_only:
                     prefixes = _ensure_prefixes()
                     if prefixes:
-                        idx_result = [
-                            s for s in idx_result
-                            if any(s["name"].lower().startswith(p) for p in prefixes)
-                        ]
+                        idx_result = [s for s in idx_result if any(s["name"].lower().startswith(p) for p in prefixes)]
                 return idx_result
 
         all_subs = _ensure_event_subscriptions()
 
         if not object_name:
             # Return without source_types to keep output compact
-            result = [
-                {k: v for k, v in s.items() if k != "source_types"}
-                for s in all_subs
-            ]
+            result = [{k: v for k, v in s.items() if k != "source_types"} for s in all_subs]
         else:
             name_lower = object_name.lower()
             result = []
@@ -1012,10 +1057,7 @@ def make_bsl_helpers(
         if custom_only:
             prefixes = _ensure_prefixes()
             if prefixes:
-                result = [
-                    s for s in result
-                    if any(s["name"].lower().startswith(p) for p in prefixes)
-                ]
+                result = [s for s in result if any(s["name"].lower().startswith(p) for p in prefixes)]
 
         return result
 
@@ -1041,19 +1083,21 @@ def make_bsl_helpers(
             if len(parts) > 1:
                 module_part = parts[0]
                 if module_part.startswith("CommonModule."):
-                    module_part = module_part[len("CommonModule."):]
+                    module_part = module_part[len("CommonModule.") :]
                 handler_module = module_part
-            result.append({
-                "name": parsed["name"],
-                "synonym": parsed["synonym"],
-                "method_name": method,
-                "handler_module": handler_module,
-                "handler_procedure": handler_procedure,
-                "use": parsed["use"],
-                "predefined": parsed["predefined"],
-                "restart_on_failure": parsed["restart_on_failure"],
-                "file": f,
-            })
+            result.append(
+                {
+                    "name": parsed["name"],
+                    "synonym": parsed["synonym"],
+                    "method_name": method,
+                    "handler_module": handler_module,
+                    "handler_procedure": handler_procedure,
+                    "use": parsed["use"],
+                    "predefined": parsed["predefined"],
+                    "restart_on_failure": parsed["restart_on_failure"],
+                    "file": f,
+                }
+            )
         return result
 
     def _ensure_scheduled_jobs() -> list[dict]:
@@ -1104,6 +1148,7 @@ def make_bsl_helpers(
 
         # Fallback: glob + parse
         from rlm_tools_bsl.bsl_xml_parsers import parse_http_service_xml
+
         files = glob_files_fn("HTTPServices/**/*.xml") + glob_files_fn("HTTPServices/**/*.mdo")
         results: list[dict] = []
         for fp in files:
@@ -1135,6 +1180,7 @@ def make_bsl_helpers(
 
         # Fallback: glob + parse
         from rlm_tools_bsl.bsl_xml_parsers import parse_web_service_xml
+
         files = glob_files_fn("WebServices/**/*.xml") + glob_files_fn("WebServices/**/*.mdo")
         results: list[dict] = []
         for fp in files:
@@ -1166,6 +1212,7 @@ def make_bsl_helpers(
 
         # Fallback: glob + parse
         from rlm_tools_bsl.bsl_xml_parsers import parse_xdto_package_xml, parse_xdto_types
+
         files = glob_files_fn("XDTOPackages/**/*.xml") + glob_files_fn("XDTOPackages/**/*.mdo")
         results: list[dict] = []
         for fp in files:
@@ -1318,7 +1365,7 @@ def make_bsl_helpers(
                         erp_mechanisms.append(m.group(1))
 
             # ТекстЗапросаТаблицаXxx function names
-            table_re = re.compile(r'(?:Функция|Процедура)\s+ТекстЗапросаТаблица(\w+)\s*\(', re.IGNORECASE)
+            table_re = re.compile(r"(?:Функция|Процедура)\s+ТекстЗапросаТаблица(\w+)\s*\(", re.IGNORECASE)
             for m in table_re.finditer(mgr_content):
                 table_name = m.group(1)
                 if table_name not in manager_tables:
@@ -1355,8 +1402,7 @@ def make_bsl_helpers(
                 return {
                     "register": register_name,
                     "writers": [
-                        {"document": w["document_name"], "source": w["source"], "file": w["file"]}
-                        for w in idx_writers
+                        {"document": w["document_name"], "source": w["source"], "file": w["file"]} for w in idx_writers
                     ],
                     "total_documents_scanned": 0,
                     "total_writers": len(idx_writers),
@@ -1365,17 +1411,15 @@ def make_bsl_helpers(
         _ensure_index()
         # Collect all document ObjectModule files
         doc_modules = [
-            (rel, info) for rel, info in _index_state
-            if info.category and info.category.lower() == "documents"
-            and info.module_type == "ObjectModule"
+            (rel, info)
+            for rel, info in _index_state
+            if info.category and info.category.lower() == "documents" and info.module_type == "ObjectModule"
         ]
 
         needle = f"движения.{register_name}".lower()
         matched = _parallel_prefilter(doc_modules, needle, base_path)
 
-        movement_re = re.compile(
-            r"Движения\." + re.escape(register_name), re.IGNORECASE
-        )
+        movement_re = re.compile(r"Движения\." + re.escape(register_name), re.IGNORECASE)
         writers: list[dict] = []
         for rel, info in matched:
             try:
@@ -1387,11 +1431,13 @@ def make_bsl_helpers(
                 if movement_re.search(line):
                     lines.append(i)
             if lines:
-                writers.append({
-                    "document": info.object_name or "",
-                    "file": rel,
-                    "lines": lines,
-                })
+                writers.append(
+                    {
+                        "document": info.object_name or "",
+                        "file": rel,
+                        "lines": lines,
+                    }
+                )
 
         return {
             "register": register_name,
@@ -1418,9 +1464,9 @@ def make_bsl_helpers(
         all_jobs = find_scheduled_jobs()
         doc_lower = document_name.lower()
         related_jobs = [
-            j for j in all_jobs
-            if doc_lower in j.get("method_name", "").lower()
-            or doc_lower in j.get("name", "").lower()
+            j
+            for j in all_jobs
+            if doc_lower in j.get("method_name", "").lower() or doc_lower in j.get("name", "").lower()
         ]
 
         return {
@@ -1457,10 +1503,12 @@ def make_bsl_helpers(
             if body:
                 create_re = re.compile(r"Документы\.(\w+)\.ДобавитьКоманду\w*НаОснован", re.IGNORECASE)
                 for m in create_re.finditer(body):
-                    result["can_create_from_here"].append({
-                        "document": m.group(1),
-                        "file": path,
-                    })
+                    result["can_create_from_here"].append(
+                        {
+                            "document": m.group(1),
+                            "file": path,
+                        }
+                    )
 
         # --- ObjectModule: ОбработкаЗаполнения ---
         obj_modules = [m for m in modules if m.get("module_type") == "ObjectModule"]
@@ -1470,10 +1518,12 @@ def make_bsl_helpers(
             if body:
                 type_re = re.compile(r'Тип\("(\w+Ссылка\.\w+)"\)', re.IGNORECASE)
                 for m in type_re.finditer(body):
-                    result["can_be_created_from"].append({
-                        "type": m.group(1),
-                        "file": path,
-                    })
+                    result["can_be_created_from"].append(
+                        {
+                            "type": m.group(1),
+                            "file": path,
+                        }
+                    )
 
         return result
 
@@ -1505,11 +1555,13 @@ def make_bsl_helpers(
                     re.IGNORECASE,
                 )
                 for m in print_re.finditer(body):
-                    result["print_forms"].append({
-                        "name": m.group(1),
-                        "presentation": m.group(2) or "",
-                        "file": path,
-                    })
+                    result["print_forms"].append(
+                        {
+                            "name": m.group(1),
+                            "presentation": m.group(2) or "",
+                            "file": path,
+                        }
+                    )
 
                 # Pattern 2: property-style (ERP 2.x)
                 #   КомандаПечати.Идентификатор = "Ид";
@@ -1527,11 +1579,13 @@ def make_bsl_helpers(
                 presentations = pres_re.findall(body)
                 for i, name in enumerate(ids):
                     if name not in seen_ids:
-                        result["print_forms"].append({
-                            "name": name,
-                            "presentation": presentations[i] if i < len(presentations) else "",
-                            "file": path,
-                        })
+                        result["print_forms"].append(
+                            {
+                                "name": name,
+                                "presentation": presentations[i] if i < len(presentations) else "",
+                                "file": path,
+                            }
+                        )
                         seen_ids.add(name)
 
         return result
@@ -1635,11 +1689,13 @@ def make_bsl_helpers(
                 # Extract option name from ПолучитьФункциональнуюОпцию("OptionName")
                 m = re.search(r'ПолучитьФункциональнуюОпцию\(\s*"([^"]+)"', text)
                 if m:
-                    code_options.append({
-                        "option_name": m.group(1),
-                        "file": r.get("file", ""),
-                        "line": r.get("line", 0),
-                    })
+                    code_options.append(
+                        {
+                            "option_name": m.group(1),
+                            "file": r.get("file", ""),
+                            "line": r.get("line", 0),
+                        }
+                    )
         except Exception:
             pass
 
@@ -1690,12 +1746,14 @@ def make_bsl_helpers(
                 continue
             rights = parse_rights_xml(content, object_name)
             for r in rights:
-                roles.append({
-                    "role_name": role_name,
-                    "object": r["object"],
-                    "rights": r["rights"],
-                    "file": f,
-                })
+                roles.append(
+                    {
+                        "role_name": role_name,
+                        "object": r["object"],
+                        "rights": r["rights"],
+                        "file": f,
+                    }
+                )
 
         # Group by role_name, merge rights (match index behavior)
         grouped: dict[str, dict] = {}
@@ -1836,11 +1894,11 @@ def make_bsl_helpers(
         re.IGNORECASE,
     )
     _QUERY_TABLE_RE = re.compile(
-        r'\b(?:ИЗ|FROM|СОЕДИНЕНИЕ|JOIN)\s+'
-        r'((?:РегистрНакопления|РегистрСведений|РегистрБухгалтерии|'
-        r'Справочник|Документ|'
-        r'AccumulationRegister|InformationRegister|AccountingRegister|'
-        r'Catalog|Document)\.\w+)',
+        r"\b(?:ИЗ|FROM|СОЕДИНЕНИЕ|JOIN)\s+"
+        r"((?:РегистрНакопления|РегистрСведений|РегистрБухгалтерии|"
+        r"Справочник|Документ|"
+        r"AccumulationRegister|InformationRegister|AccountingRegister|"
+        r"Catalog|Document)\.\w+)",
         re.IGNORECASE,
     )
 
@@ -1866,12 +1924,12 @@ def make_bsl_helpers(
 
             # Collect multiline query text (1C uses | prefix for continuation)
             query_start = i
-            query_lines = [line[m.end():]]
+            query_lines = [line[m.end() :]]
             j = i + 1
             while j < len(lines):
                 stripped = lines[j].strip()
-                if stripped.startswith("|") or stripped.startswith("\""):
-                    query_lines.append(stripped.lstrip("|").lstrip("\""))
+                if stripped.startswith("|") or stripped.startswith('"'):
+                    query_lines.append(stripped.lstrip("|").lstrip('"'))
                 elif stripped.startswith("'") or stripped == "":
                     query_lines.append(stripped.lstrip("'"))
                 else:
@@ -1880,9 +1938,7 @@ def make_bsl_helpers(
             query_text = "\n".join(query_lines)
 
             # Extract table names
-            tables = list(dict.fromkeys(
-                m2.group(1) for m2 in _QUERY_TABLE_RE.finditer(query_text)
-            ))
+            tables = list(dict.fromkeys(m2.group(1) for m2 in _QUERY_TABLE_RE.finditer(query_text)))
 
             # Determine which procedure this belongs to
             line_num = query_start + 1  # 1-based
@@ -1896,23 +1952,22 @@ def make_bsl_helpers(
             if len(query_text) > 200:
                 preview += "..."
 
-            queries.append({
-                "procedure": proc_name,
-                "line": line_num,
-                "tables": tables,
-                "text_preview": preview,
-            })
+            queries.append(
+                {
+                    "procedure": proc_name,
+                    "line": line_num,
+                    "tables": tables,
+                    "text_preview": preview,
+                }
+            )
             i = j
         return queries
 
     # ── Code metrics ─────────────────────────────────────────
 
-    _COMMENT_RE = re.compile(r'^\s*//')
-    _NESTING_OPEN_RE = re.compile(
-        r'\b(Если|Для|Пока|Попытка|If|For|While|Try)\b', re.IGNORECASE)
-    _NESTING_CLOSE_RE = re.compile(
-        r'\b(КонецЕсли|КонецЦикла|КонецПопытки|EndIf|EndDo|EndTry)\b',
-        re.IGNORECASE)
+    _COMMENT_RE = re.compile(r"^\s*//")
+    _NESTING_OPEN_RE = re.compile(r"\b(Если|Для|Пока|Попытка|If|For|While|Try)\b", re.IGNORECASE)
+    _NESTING_CLOSE_RE = re.compile(r"\b(КонецЕсли|КонецЦикла|КонецПопытки|EndIf|EndDo|EndTry)\b", re.IGNORECASE)
 
     def code_metrics(path: str) -> dict:
         """Compute code metrics for a BSL module.
@@ -1946,10 +2001,7 @@ def make_bsl_helpers(
         procs = extract_procedures(path)
         exports = [p for p in procs if p.get("is_export")]
 
-        sizes = [
-            (p["end_line"] or total) - p["line"] + 1
-            for p in procs
-        ]
+        sizes = [(p["end_line"] or total) - p["line"] + 1 for p in procs]
         avg_size = round(sum(sizes) / len(sizes), 1) if sizes else 0
 
         return {
@@ -1968,6 +2020,7 @@ def make_bsl_helpers(
     def detect_extensions() -> dict:
         """Обнаружить расширения рядом и текущую роль конфигурации."""
         from rlm_tools_bsl.extension_detector import detect_extension_context as _det
+
         ctx = _det(base_path)
         result = {
             "config_role": ctx.current.role.value,
@@ -1975,15 +2028,15 @@ def make_bsl_helpers(
             "config_prefix": ctx.current.name_prefix,
             "warnings": ctx.warnings,
             "nearby_extensions": [
-                {"name": e.name, "purpose": e.purpose,
-                 "prefix": e.name_prefix, "path": e.path}
+                {"name": e.name, "purpose": e.purpose, "prefix": e.name_prefix, "path": e.path}
                 for e in ctx.nearby_extensions
             ],
             "nearby_main": None,
         }
         if ctx.nearby_main:
             result["nearby_main"] = {
-                "name": ctx.nearby_main.name, "path": ctx.nearby_main.path,
+                "name": ctx.nearby_main.name,
+                "path": ctx.nearby_main.path,
             }
         return result
 
@@ -1992,6 +2045,7 @@ def make_bsl_helpers(
         extension_path — путь к расширению (из detect_extensions).
         object_name — имя объекта для прицельного поиска ('' = все)."""
         from rlm_tools_bsl.extension_detector import find_extension_overrides as _feo
+
         overrides = _feo(extension_path, object_name or None)
         return {
             "extension_path": extension_path,
@@ -2005,332 +2059,433 @@ def make_bsl_helpers(
     # category (for grouping), keywords (for help search), recipe (code example).
     # Adding a new helper = define function above + add _reg() here.
 
-    _reg("find_module", find_module,
-         "find_module(name) -> [{path, category, object_name, module_type}]",
-         "discovery")
-    _reg("find_by_type", find_by_type,
-         "find_by_type(category, name='') -> same. Categories: Documents, Catalogs, CommonModules, InformationRegisters, AccumulationRegisters, Reports, DataProcessors",
-         "discovery")
+    _reg("find_module", find_module, "find_module(name) -> [{path, category, object_name, module_type}]", "discovery")
+    _reg(
+        "find_by_type",
+        find_by_type,
+        "find_by_type(category, name='') -> same. Categories: Documents, Catalogs, CommonModules, InformationRegisters, AccumulationRegisters, Reports, DataProcessors",
+        "discovery",
+    )
 
-    _reg("extract_procedures", extract_procedures,
-         "extract_procedures(path) -> [{name, type, line, end_line, is_export, params}]",
-         "code")
-    _reg("find_exports", find_exports,
-         "find_exports(path) -> [{name, line, is_export, type, params}]",
-         "code",
-         ["export", "экспорт", "find_exports", "процедур", "функци"],
-         "FIND EXPORTS:\n"
-         "  modules = find_module('Name')  # replace 'Name'\n"
-         "  path = modules[0]['path']\n"
-         "  exports = find_exports(path)\n"
-         "  for e in exports:\n"
-         "      print(e['name'], 'line:', e['line'], 'export:', e['is_export'])")
-    _reg("read_procedure", read_procedure,
-         "read_procedure(path, proc_name) -> str | None",
-         "code",
-         ["read", "чтени", "читать", "содержим", "content", "тело", "body"],
-         "READ PROCEDURE BODY:\n"
-         "  body = read_procedure('path/to/Module.bsl', 'ProcedureName')\n"
-         "  print(body)\n"
-         "  # Or read full file:\n"
-         "  content = read_file('path/to/Module.bsl')\n"
-         "  print(content[:2000])")
-    _reg("find_callers_context", find_callers_context,
-         "find_callers_context(proc, hint, 0, 50) -> {callers: [{file, caller_name, line, ...}], _meta: {total_callers, returned, offset, has_more}}",
-         "code",
-         ["caller", "call graph", "граф", "вызов", "вызыва",
-          "кто вызывает", "find_callers"],
-         "BUILD CALL GRAPH:\n"
-         "  # With index: instant across the whole codebase, hint is optional\n"
-         "  # Without index: parallel file scan, hint narrows scope\n"
-         "  exports = find_exports('path/to/Module.bsl')\n"
-         "  for e in exports:\n"
-         "      data = find_callers_context(e['name'], '', 0, 50)\n"
-         "      for c in data['callers']:\n"
-         "          print(e['name'], '<-', c['caller_name'], c['file'], 'line:', c['line'])\n"
-         "      if data['_meta']['has_more']:\n"
-         "          print('  ... more callers, increase offset')")
-    _reg("find_callers", find_callers,
-         "find_callers(proc, hint, max_files=20) -> [{file, line, text}]",
-         "code")
-    _reg("safe_grep", safe_grep,
-         "safe_grep(pattern, hint, max_files=20) -> [{file, line, text}]",
-         "code",
-         ["search", "grep", "поиск", "искать", "найти", "pattern", "шаблон"],
-         "SEARCH FOR CODE:\n"
-         "  results = safe_grep('SearchPattern', 'ModuleHint', max_files=20)\n"
-         "  for r in results:\n"
-         "      print(r['file'], 'line:', r['line'], r['text'])\n"
-         "  # Or find modules by name:\n"
-         "  modules = find_module('PartOfName')\n"
-         "  for m in modules:\n"
-         "      print(m['path'], m['category'], m['object_name'])")
+    _reg(
+        "extract_procedures",
+        extract_procedures,
+        "extract_procedures(path) -> [{name, type, line, end_line, is_export, params}]",
+        "code",
+    )
+    _reg(
+        "find_exports",
+        find_exports,
+        "find_exports(path) -> [{name, line, is_export, type, params}]",
+        "code",
+        ["export", "экспорт", "find_exports", "процедур", "функци"],
+        "FIND EXPORTS:\n"
+        "  modules = find_module('Name')  # replace 'Name'\n"
+        "  path = modules[0]['path']\n"
+        "  exports = find_exports(path)\n"
+        "  for e in exports:\n"
+        "      print(e['name'], 'line:', e['line'], 'export:', e['is_export'])",
+    )
+    _reg(
+        "read_procedure",
+        read_procedure,
+        "read_procedure(path, proc_name) -> str | None",
+        "code",
+        ["read", "чтени", "читать", "содержим", "content", "тело", "body"],
+        "READ PROCEDURE BODY:\n"
+        "  body = read_procedure('path/to/Module.bsl', 'ProcedureName')\n"
+        "  print(body)\n"
+        "  # Or read full file:\n"
+        "  content = read_file('path/to/Module.bsl')\n"
+        "  print(content[:2000])",
+    )
+    _reg(
+        "find_callers_context",
+        find_callers_context,
+        "find_callers_context(proc, hint, 0, 50) -> {callers: [{file, caller_name, line, ...}], _meta: {total_callers, returned, offset, has_more}}",
+        "code",
+        ["caller", "call graph", "граф", "вызов", "вызыва", "кто вызывает", "find_callers"],
+        "BUILD CALL GRAPH:\n"
+        "  # With index: instant across the whole codebase, hint is optional\n"
+        "  # Without index: parallel file scan, hint narrows scope\n"
+        "  exports = find_exports('path/to/Module.bsl')\n"
+        "  for e in exports:\n"
+        "      data = find_callers_context(e['name'], '', 0, 50)\n"
+        "      for c in data['callers']:\n"
+        "          print(e['name'], '<-', c['caller_name'], c['file'], 'line:', c['line'])\n"
+        "      if data['_meta']['has_more']:\n"
+        "          print('  ... more callers, increase offset')",
+    )
+    _reg("find_callers", find_callers, "find_callers(proc, hint, max_files=20) -> [{file, line, text}]", "code")
+    _reg(
+        "safe_grep",
+        safe_grep,
+        "safe_grep(pattern, hint, max_files=20) -> [{file, line, text}]",
+        "code",
+        ["search", "grep", "поиск", "искать", "найти", "pattern", "шаблон"],
+        "SEARCH FOR CODE:\n"
+        "  results = safe_grep('SearchPattern', 'ModuleHint', max_files=20)\n"
+        "  for r in results:\n"
+        "      print(r['file'], 'line:', r['line'], r['text'])\n"
+        "  # Or find modules by name:\n"
+        "  modules = find_module('PartOfName')\n"
+        "  for m in modules:\n"
+        "      print(m['path'], m['category'], m['object_name'])",
+    )
 
-    _reg("parse_object_xml", parse_object_xml,
-         "parse_object_xml(path) -> {name, synonym, attributes, tabular_sections, dimensions, resources, ...}",
-         "xml",
-         ["metadata", "метаданн", "реквизит", "attribute", "dimension",
-          "измерен", "ресурс", "resource", "табличн", "tabular",
-          "xml", "parse_object"],
-         "READ METADATA:\n"
-         "  # Accepts directory or XML path — auto-resolves:\n"
-         "  meta = parse_object_xml('Documents/РеализацияТоваровУслуг')  # directory\n"
-         "  meta = parse_object_xml('Documents/Name/Ext/Document.xml')   # direct XML\n"
-         "  for key in meta:\n"
-         "      print(key, ':', meta[key])")
-    _reg("find_enum_values", find_enum_values,
-         "find_enum_values(enum_name) -> {name, synonym, values: [{name, synonym}]}",
-         "xml",
-         ["перечислен", "enum", "значени перечислени"],
-         "FIND ENUM VALUES:\n"
-         "  result = find_enum_values('СтатусыЗаказовКлиентов')\n"
-         "  print(f\"{result['name']} ({result['synonym']})\")\n"
-         "  for v in result['values']:\n"
-         "      print(f\"  {v['name']}: {v['synonym']}\")")
+    _reg(
+        "parse_object_xml",
+        parse_object_xml,
+        "parse_object_xml(path) -> {name, synonym, attributes, tabular_sections, dimensions, resources, ...}",
+        "xml",
+        [
+            "metadata",
+            "метаданн",
+            "реквизит",
+            "attribute",
+            "dimension",
+            "измерен",
+            "ресурс",
+            "resource",
+            "табличн",
+            "tabular",
+            "xml",
+            "parse_object",
+        ],
+        "READ METADATA:\n"
+        "  # Accepts directory or XML path — auto-resolves:\n"
+        "  meta = parse_object_xml('Documents/РеализацияТоваровУслуг')  # directory\n"
+        "  meta = parse_object_xml('Documents/Name/Ext/Document.xml')   # direct XML\n"
+        "  for key in meta:\n"
+        "      print(key, ':', meta[key])",
+    )
+    _reg(
+        "find_enum_values",
+        find_enum_values,
+        "find_enum_values(enum_name) -> {name, synonym, values: [{name, synonym}]}",
+        "xml",
+        ["перечислен", "enum", "значени перечислени"],
+        "FIND ENUM VALUES:\n"
+        "  result = find_enum_values('СтатусыЗаказовКлиентов')\n"
+        "  print(f\"{result['name']} ({result['synonym']})\")\n"
+        "  for v in result['values']:\n"
+        "      print(f\"  {v['name']}: {v['synonym']}\")",
+    )
 
-    _reg("analyze_object", analyze_object,
-         "analyze_object(name) -> full profile: metadata + modules + procedures + exports",
-         "composite",
-         ["profile", "профиль", "обзор", "overview", "analyze_object"],
-         "OBJECT PROFILE:\n"
-         "  result = analyze_object('АвансовыйОтчет')\n"
-         "  meta = result.get('metadata', {})\n"
-         "  print(f\"Объект: {result['name']} ({meta.get('synonym', '')})\")\n"
-         "  print(f\"Реквизитов: {len(meta.get('attributes', []))}\")\n"
-         "  for m in result.get('modules', []):\n"
-         "      print(f\"  {m['module_type']}: {m['procedures_count']} проц, {m['exports_count']} эксп\")")
-    _reg("analyze_document_flow", analyze_document_flow,
-         "analyze_document_flow(doc_name) -> metadata + subscriptions + register movements + jobs",
-         "composite",
-         ["lifecycle", "жизненн", "flow", "end-to-end",
-          "полный анализ", "как работает"],
-         "FULL DOCUMENT LIFECYCLE:\n"
-         "  flow = analyze_document_flow('АвансовыйОтчет')\n"
-         "  print('Подписки:', len(flow['event_subscriptions']))\n"
-         "  for s in flow['event_subscriptions']:\n"
-         "      print(f\"  {s['event']}: {s['handler']}\")\n"
-         "  regs = flow['register_movements'].get('code_registers', [])\n"
-         "  print('Регистры:', len(regs))\n"
-         "  for r in regs:\n"
-         "      print(f\"  Движения.{r['name']}\")")
-    _reg("analyze_subsystem", analyze_subsystem,
-         "analyze_subsystem(name) -> composition, custom vs standard objects",
-         "composite",
-         ["subsystem", "подсистем", "состав подсистем"],
-         "ANALYZE SUBSYSTEM:\n"
-         "  result = analyze_subsystem('Спецодежда')\n"
-         "  for sub in result.get('subsystems', []):\n"
-         "      print(f\"Подсистема: {sub['name']} ({sub['synonym']})\")\n"
-         "      print(f\"Нетиповых: {len(sub['custom_objects'])}, типовых: {len(sub['standard_objects'])}\")\n"
-         "      for obj in sub['custom_objects']:\n"
-         "          print(f\"  [нетип] {obj['type']}.{obj['name']}\")\n"
-         "      for obj in sub['standard_objects']:\n"
-         "          print(f\"  [типов] {obj['type']}.{obj['name']}\")")
-    _reg("find_custom_modifications", find_custom_modifications,
-         "find_custom_modifications(obj, pfx=None) -> custom procedures, regions, attributes",
-         "composite",
-         ["custom", "нетипов", "доработк", "модификац", "modification"],
-         "FIND CUSTOM MODIFICATIONS:\n"
-         "  result = find_custom_modifications('ВнутреннееПотребление')\n"
-         "  for mod in result.get('modifications', []):\n"
-         "      print(f\"Модуль: {mod['path']}\")\n"
-         "      for p in mod['custom_procedures']:\n"
-         "          print(f\"  {p['type']} {p['name']} (стр.{p['line']})\")\n"
-         "      for r in mod['custom_regions']:\n"
-         "          print(f\"  #Область {r['name']} (стр.{r['line']})\")\n"
-         "  for attr in result.get('custom_attributes', []):\n"
-         "      print(f\"Реквизит: {attr['name']} ({attr.get('synonym', '')})\")")
+    _reg(
+        "analyze_object",
+        analyze_object,
+        "analyze_object(name) -> full profile: metadata + modules + procedures + exports",
+        "composite",
+        ["profile", "профиль", "обзор", "overview", "analyze_object"],
+        "OBJECT PROFILE:\n"
+        "  result = analyze_object('АвансовыйОтчет')\n"
+        "  meta = result.get('metadata', {})\n"
+        "  print(f\"Объект: {result['name']} ({meta.get('synonym', '')})\")\n"
+        "  print(f\"Реквизитов: {len(meta.get('attributes', []))}\")\n"
+        "  for m in result.get('modules', []):\n"
+        "      print(f\"  {m['module_type']}: {m['procedures_count']} проц, {m['exports_count']} эксп\")",
+    )
+    _reg(
+        "analyze_document_flow",
+        analyze_document_flow,
+        "analyze_document_flow(doc_name) -> metadata + subscriptions + register movements + jobs",
+        "composite",
+        ["lifecycle", "жизненн", "flow", "end-to-end", "полный анализ", "как работает"],
+        "FULL DOCUMENT LIFECYCLE:\n"
+        "  flow = analyze_document_flow('АвансовыйОтчет')\n"
+        "  print('Подписки:', len(flow['event_subscriptions']))\n"
+        "  for s in flow['event_subscriptions']:\n"
+        "      print(f\"  {s['event']}: {s['handler']}\")\n"
+        "  regs = flow['register_movements'].get('code_registers', [])\n"
+        "  print('Регистры:', len(regs))\n"
+        "  for r in regs:\n"
+        "      print(f\"  Движения.{r['name']}\")",
+    )
+    _reg(
+        "analyze_subsystem",
+        analyze_subsystem,
+        "analyze_subsystem(name) -> composition, custom vs standard objects",
+        "composite",
+        ["subsystem", "подсистем", "состав подсистем"],
+        "ANALYZE SUBSYSTEM:\n"
+        "  result = analyze_subsystem('Спецодежда')\n"
+        "  for sub in result.get('subsystems', []):\n"
+        "      print(f\"Подсистема: {sub['name']} ({sub['synonym']})\")\n"
+        "      print(f\"Нетиповых: {len(sub['custom_objects'])}, типовых: {len(sub['standard_objects'])}\")\n"
+        "      for obj in sub['custom_objects']:\n"
+        "          print(f\"  [нетип] {obj['type']}.{obj['name']}\")\n"
+        "      for obj in sub['standard_objects']:\n"
+        "          print(f\"  [типов] {obj['type']}.{obj['name']}\")",
+    )
+    _reg(
+        "find_custom_modifications",
+        find_custom_modifications,
+        "find_custom_modifications(obj, custom_prefixes=None) -> custom procedures, regions, attributes",
+        "composite",
+        ["custom", "нетипов", "доработк", "модификац", "modification"],
+        "FIND CUSTOM MODIFICATIONS:\n"
+        "  result = find_custom_modifications('ВнутреннееПотребление')\n"
+        "  for mod in result.get('modifications', []):\n"
+        "      print(f\"Модуль: {mod['path']}\")\n"
+        "      for p in mod['custom_procedures']:\n"
+        "          print(f\"  {p['type']} {p['name']} (стр.{p['line']})\")\n"
+        "      for r in mod['custom_regions']:\n"
+        "          print(f\"  #Область {r['name']} (стр.{r['line']})\")\n"
+        "  for attr in result.get('custom_attributes', []):\n"
+        "      print(f\"Реквизит: {attr['name']} ({attr.get('synonym', '')})\")",
+    )
 
-    _reg("find_event_subscriptions", find_event_subscriptions,
-         "find_event_subscriptions(obj, custom_only=False) -> [{event, handler, handler_module, handler_procedure, ...}]",
-         "business",
-         ["подписк", "subscription", "событи", "event",
-          "BeforeWrite", "OnWrite", "ПриЗаписи", "ПередЗаписью"],
-         "FIND EVENT SUBSCRIPTIONS (what fires on document write/post):\n"
-         "  # With index: instant. Without: parses XML on first call.\n"
-         "  subs = find_event_subscriptions('АвансовыйОтчет')\n"
-         "  for s in subs:\n"
-         "      print(f\"{s['event']}: {s['handler']} ({s['name']})\")")
-    _reg("find_scheduled_jobs", find_scheduled_jobs,
-         "find_scheduled_jobs(name='') -> [{name, method_name, use, ...}]",
-         "business",
-         ["регламент", "schedule", "job", "задани", "фонов", "background"],
-         "FIND SCHEDULED JOBS:\n"
-         "  # With index: instant. Without: parses XML on first call.\n"
-         "  jobs = find_scheduled_jobs('Курс')\n"
-         "  for j in jobs:\n"
-         "      print(f\"{j['name']}: {j['method_name']} (active={j['use']})\")")
-    _reg("find_register_movements", find_register_movements,
-         "find_register_movements(doc_name) -> {code_registers, erp_mechanisms, manager_tables, adapted_registers}",
-         "business",
-         ["движени", "movement", "регистр", "register", "проведен", "posting"],
-         "TRACE DOCUMENT REGISTER MOVEMENTS:\n"
-         "  result = find_register_movements('ПриобретениеТоваровУслуг')\n"
-         "  for r in result['code_registers']:\n"
-         "      detail = r.get('lines') or r.get('source', '')\n"
-         "      print(f\"  Движения.{r['name']} ({detail})\")\n"
-         "\n"
-         "FIND WHO WRITES TO REGISTER:\n"
-         "  result = find_register_writers('ТоварыНаСкладах')\n"
-         "  for w in result['writers']:\n"
-         "      detail = w.get('lines') or w.get('source', '')\n"
-         "      print(f\"  {w['document']} ({detail})\")")
-    _reg("find_register_writers", find_register_writers,
-         "find_register_writers(reg_name) -> {writers: [{document, source|lines, file}]}",
-         "business")
-    _reg("find_based_on_documents", find_based_on_documents,
-         "find_based_on_documents(doc_name) -> {can_create_from_here, can_be_created_from}",
-         "business",
-         ["основани", "ввод на основании", "создать на основании",
-          "based on", "filling", "заполнени"],
-         "FIND BASED-ON DOCUMENTS (ввод на основании):\n"
-         "  result = find_based_on_documents('ПриобретениеТоваровУслуг')\n"
-         "  print('Можно создать из этого документа:')\n"
-         "  for d in result['can_create_from_here']:\n"
-         "      print(f\"  -> {d['document']}\")\n"
-         "  print('Этот документ создается на основании:')\n"
-         "  for d in result['can_be_created_from']:\n"
-         "      print(f\"  <- {d['type']}\")")
-    _reg("find_print_forms", find_print_forms,
-         "find_print_forms(obj_name) -> {print_forms: [{name, presentation}]}",
-         "business",
-         ["печат", "print", "макет", "template", "накладн"],
-         "FIND PRINT FORMS:\n"
-         "  result = find_print_forms('РеализацияТоваровУслуг')\n"
-         "  for p in result['print_forms']:\n"
-         "      print(f\"  {p['name']}: {p['presentation']}\")")
-    _reg("find_functional_options", find_functional_options,
-         "find_functional_options(obj_name) -> {xml_options, code_options}",
-         "business",
-         ["функциональн", "опци", "functional", "option",
-          "включен", "выключен"],
-         "FIND FUNCTIONAL OPTIONS:\n"
-         "  # With index: XML options instant. Code grep still runs live.\n"
-         "  result = find_functional_options('РеализацияТоваровУслуг')\n"
-         "  for fo in result['xml_options']:\n"
-         "      print(f\"  {fo['name']}: {fo['synonym']}\")\n"
-         "  for co in result['code_options']:\n"
-         "      print(f\"  В коде: {co['option_name']} (стр.{co['line']})\")")
-    _reg("find_roles", find_roles,
-         "find_roles(obj_name) -> {roles: [{role_name, rights}]}",
-         "business",
-         ["роль", "role", "прав", "right", "доступ", "access", "разрешен"],
-         "FIND ROLES AND RIGHTS:\n"
-         "  result = find_roles('ПриобретениеТоваровУслуг')\n"
-         "  for r in result['roles']:\n"
-         "      print(f\"  {r['role_name']}: {', '.join(r['rights'])}\")")
+    _reg(
+        "find_event_subscriptions",
+        find_event_subscriptions,
+        "find_event_subscriptions(obj, custom_only=False) -> [{event, handler, handler_module, handler_procedure, ...}]",
+        "business",
+        ["подписк", "subscription", "событи", "event", "BeforeWrite", "OnWrite", "ПриЗаписи", "ПередЗаписью"],
+        "FIND EVENT SUBSCRIPTIONS (what fires on document write/post):\n"
+        "  # With index: instant. Without: parses XML on first call.\n"
+        "  subs = find_event_subscriptions('АвансовыйОтчет')\n"
+        "  for s in subs:\n"
+        "      print(f\"{s['event']}: {s['handler']} ({s['name']})\")",
+    )
+    _reg(
+        "find_scheduled_jobs",
+        find_scheduled_jobs,
+        "find_scheduled_jobs(name='') -> [{name, method_name, use, ...}]",
+        "business",
+        ["регламент", "schedule", "job", "задани", "фонов", "background"],
+        "FIND SCHEDULED JOBS:\n"
+        "  # With index: instant. Without: parses XML on first call.\n"
+        "  jobs = find_scheduled_jobs('Курс')\n"
+        "  for j in jobs:\n"
+        "      print(f\"{j['name']}: {j['method_name']} (active={j['use']})\")",
+    )
+    _reg(
+        "find_register_movements",
+        find_register_movements,
+        "find_register_movements(doc_name) -> {code_registers, erp_mechanisms, manager_tables, adapted_registers}",
+        "business",
+        ["движени", "movement", "регистр", "register", "проведен", "posting"],
+        "TRACE DOCUMENT REGISTER MOVEMENTS:\n"
+        "  result = find_register_movements('ПриобретениеТоваровУслуг')\n"
+        "  for r in result['code_registers']:\n"
+        "      detail = r.get('lines') or r.get('source', '')\n"
+        "      print(f\"  Движения.{r['name']} ({detail})\")\n"
+        "\n"
+        "FIND WHO WRITES TO REGISTER:\n"
+        "  result = find_register_writers('ТоварыНаСкладах')\n"
+        "  for w in result['writers']:\n"
+        "      detail = w.get('lines') or w.get('source', '')\n"
+        "      print(f\"  {w['document']} ({detail})\")",
+    )
+    _reg(
+        "find_register_writers",
+        find_register_writers,
+        "find_register_writers(reg_name) -> {writers: [{document, source|lines, file}]}",
+        "business",
+    )
+    _reg(
+        "find_based_on_documents",
+        find_based_on_documents,
+        "find_based_on_documents(doc_name) -> {can_create_from_here, can_be_created_from}",
+        "business",
+        ["основани", "ввод на основании", "создать на основании", "based on", "filling", "заполнени"],
+        "FIND BASED-ON DOCUMENTS (ввод на основании):\n"
+        "  result = find_based_on_documents('ПриобретениеТоваровУслуг')\n"
+        "  print('Можно создать из этого документа:')\n"
+        "  for d in result['can_create_from_here']:\n"
+        "      print(f\"  -> {d['document']}\")\n"
+        "  print('Этот документ создается на основании:')\n"
+        "  for d in result['can_be_created_from']:\n"
+        "      print(f\"  <- {d['type']}\")",
+    )
+    _reg(
+        "find_print_forms",
+        find_print_forms,
+        "find_print_forms(obj_name) -> {print_forms: [{name, presentation}]}",
+        "business",
+        ["печат", "print", "макет", "template", "накладн"],
+        "FIND PRINT FORMS:\n"
+        "  result = find_print_forms('РеализацияТоваровУслуг')\n"
+        "  for p in result['print_forms']:\n"
+        "      print(f\"  {p['name']}: {p['presentation']}\")",
+    )
+    _reg(
+        "find_functional_options",
+        find_functional_options,
+        "find_functional_options(obj_name) -> {xml_options, code_options}",
+        "business",
+        ["функциональн", "опци", "functional", "option", "включен", "выключен"],
+        "FIND FUNCTIONAL OPTIONS:\n"
+        "  # With index: XML options instant. Code grep still runs live.\n"
+        "  result = find_functional_options('РеализацияТоваровУслуг')\n"
+        "  for fo in result['xml_options']:\n"
+        "      print(f\"  {fo['name']}: {fo['synonym']}\")\n"
+        "  for co in result['code_options']:\n"
+        "      print(f\"  В коде: {co['option_name']} (стр.{co['line']})\")",
+    )
+    _reg(
+        "find_roles",
+        find_roles,
+        "find_roles(obj_name) -> {roles: [{role_name, rights}]}",
+        "business",
+        ["роль", "role", "прав", "right", "доступ", "access", "разрешен"],
+        "FIND ROLES AND RIGHTS:\n"
+        "  result = find_roles('ПриобретениеТоваровУслуг')\n"
+        "  for r in result['roles']:\n"
+        "      print(f\"  {r['role_name']}: {', '.join(r['rights'])}\")",
+    )
 
-    _reg("extract_queries", extract_queries,
-         "extract_queries(path) -> [{procedure, line, tables, text_preview}]",
-         "code",
-         ["запрос", "query", "таблиц", "table", "select", "выбрать"],
-         "EXTRACT QUERIES FROM MODULE:\n"
-         "  queries = extract_queries('path/to/ObjectModule.bsl')\n"
-         "  for q in queries:\n"
-         "      print(f\"  {q['procedure']} стр.{q['line']}: таблицы={q['tables']}\")\n"
-         "      print(f\"    {q['text_preview'][:100]}\")")
-    _reg("code_metrics", code_metrics,
-         "code_metrics(path) -> {total_lines, code_lines, comment_lines, procedures_count, avg_proc_size, max_nesting}",
-         "code",
-         ["метрик", "metric", "размер", "size", "complex", "сложност",
-          "статистик", "statistic"],
-         "CODE METRICS:\n"
-         "  m = code_metrics('path/to/Module.bsl')\n"
-         "  print(f\"Строк: {m['total_lines']} (код: {m['code_lines']}, комментарии: {m['comment_lines']})\")\n"
-         "  print(f\"Процедур: {m['procedures_count']}, экспортных: {m['exports_count']}\")\n"
-         "  print(f\"Средний размер: {m['avg_proc_size']} строк, макс. вложенность: {m['max_nesting']}\")")
+    _reg(
+        "extract_queries",
+        extract_queries,
+        "extract_queries(path) -> [{procedure, line, tables, text_preview}]",
+        "code",
+        ["запрос", "query", "таблиц", "table", "select", "выбрать"],
+        "EXTRACT QUERIES FROM MODULE:\n"
+        "  queries = extract_queries('path/to/ObjectModule.bsl')\n"
+        "  for q in queries:\n"
+        "      print(f\"  {q['procedure']} стр.{q['line']}: таблицы={q['tables']}\")\n"
+        "      print(f\"    {q['text_preview'][:100]}\")",
+    )
+    _reg(
+        "code_metrics",
+        code_metrics,
+        "code_metrics(path) -> {total_lines, code_lines, comment_lines, procedures_count, avg_proc_size, max_nesting}",
+        "code",
+        ["метрик", "metric", "размер", "size", "complex", "сложност", "статистик", "statistic"],
+        "CODE METRICS:\n"
+        "  m = code_metrics('path/to/Module.bsl')\n"
+        "  print(f\"Строк: {m['total_lines']} (код: {m['code_lines']}, комментарии: {m['comment_lines']})\")\n"
+        "  print(f\"Процедур: {m['procedures_count']}, экспортных: {m['exports_count']}\")\n"
+        "  print(f\"Средний размер: {m['avg_proc_size']} строк, макс. вложенность: {m['max_nesting']}\")",
+    )
 
-    _reg("search_methods", search_methods,
-         "search_methods(query, limit=30) -> [{name, type, is_export, module_path, object_name, rank}]",
-         "discovery",
-         ["поиск метод", "search", "fts", "full-text", "найти метод", "подстрок"],
-         "SEARCH METHODS BY NAME (FTS5, requires pre-built index with --no-fts NOT set):\n"
-         "  # Find methods by substring across the entire codebase — instant\n"
-         "  results = search_methods('ОбработкаЗаполнения')\n"
-         "  for r in results:\n"
-         "      print(f\"  {r['name']} ({r['type']}) export={r['is_export']} in {r['module_path']}\")\n"
-         "  # Returns [] if index or FTS not available\n"
-         "  # Combine with read_procedure() to read found methods:\n"
-         "  #   body = read_procedure(r['module_path'], r['name'])")
-    _reg("search_objects", search_objects,
-         "search_objects(query) -> [{object_name, category, synonym, file}] — find by BUSINESS NAME",
-         "discovery",
-         ["synonym", "синоним", "бизнес", "search_objects", "объект", "business"],
-         "SEARCH BY BUSINESS NAME (requires index v7+):\n"
-         "  results = search_objects('себестоимость')\n"
-         "  for r in results:\n"
-         "      print(r['synonym'], r['category'], r['object_name'])")
-    _reg("search_regions", search_regions,
-         "search_regions(query) -> [{name, line, end_line, module_path, object_name, category}]",
-         "discovery",
-         ["область", "region", "search_regions", "#Область"],
-         "FIND CODE REGIONS:\n"
-         "  regions = search_regions('Себестоимость')\n"
-         "  for r in regions:\n"
-         "      print(r['category'], r['object_name'], r['name'], f'L{r[\"line\"]}-{r[\"end_line\"]}')")
-    _reg("search_module_headers", search_module_headers,
-         "search_module_headers(query) -> [{module_path, object_name, category, header_comment}]",
-         "discovery",
-         ["заголовок", "header", "комментарий", "search_module_headers"],
-         "FIND MODULES BY HEADER COMMENT:\n"
-         "  headers = search_module_headers('себестоимость')\n"
-         "  for h in headers:\n"
-         "      print(h['category'], h['object_name'], h['header_comment'][:80])")
-    _reg("get_index_info", get_index_info,
-         "get_index_info() -> {builder_version, config_name, has_fts, has_synonyms, ...}",
-         "discovery",
-         ["index", "version", "индекс", "версия", "info", "get_index_info"],
-         "CHECK INDEX:\n"
-         "  info = get_index_info()\n"
-         "  print(info['builder_version'], info['has_synonyms'])")
+    _reg(
+        "search_methods",
+        search_methods,
+        "search_methods(query, limit=30) -> [{name, type, is_export, module_path, object_name, rank}]",
+        "discovery",
+        ["поиск метод", "search", "fts", "full-text", "найти метод", "подстрок"],
+        "SEARCH METHODS BY NAME (FTS5, requires pre-built index with --no-fts NOT set):\n"
+        "  # Find methods by substring across the entire codebase — instant\n"
+        "  results = search_methods('ОбработкаЗаполнения')\n"
+        "  for r in results:\n"
+        "      print(f\"  {r['name']} ({r['type']}) export={r['is_export']} in {r['module_path']}\")\n"
+        "  # Returns [] if index or FTS not available\n"
+        "  # Combine with read_procedure() to read found methods:\n"
+        "  #   body = read_procedure(r['module_path'], r['name'])",
+    )
+    _reg(
+        "search_objects",
+        search_objects,
+        "search_objects(query) -> [{object_name, category, synonym, file}] — find by BUSINESS NAME",
+        "discovery",
+        ["synonym", "синоним", "бизнес", "search_objects", "объект", "business"],
+        "SEARCH BY BUSINESS NAME (requires index v7+):\n"
+        "  results = search_objects('себестоимость')\n"
+        "  for r in results:\n"
+        "      print(r['synonym'], r['category'], r['object_name'])",
+    )
+    _reg(
+        "search_regions",
+        search_regions,
+        "search_regions(query) -> [{name, line, end_line, module_path, object_name, category}]",
+        "discovery",
+        ["область", "region", "search_regions", "#Область"],
+        "FIND CODE REGIONS:\n"
+        "  regions = search_regions('Себестоимость')\n"
+        "  for r in regions:\n"
+        "      print(r['category'], r['object_name'], r['name'], f'L{r[\"line\"]}-{r[\"end_line\"]}')",
+    )
+    _reg(
+        "search_module_headers",
+        search_module_headers,
+        "search_module_headers(query) -> [{module_path, object_name, category, header_comment}]",
+        "discovery",
+        ["заголовок", "header", "комментарий", "search_module_headers"],
+        "FIND MODULES BY HEADER COMMENT:\n"
+        "  headers = search_module_headers('себестоимость')\n"
+        "  for h in headers:\n"
+        "      print(h['category'], h['object_name'], h['header_comment'][:80])",
+    )
+    _reg(
+        "get_index_info",
+        get_index_info,
+        "get_index_info() -> {builder_version, config_name, has_fts, has_synonyms, ...}",
+        "discovery",
+        ["index", "version", "индекс", "версия", "info", "get_index_info"],
+        "CHECK INDEX:\n  info = get_index_info()\n  print(info['builder_version'], info['has_synonyms'])",
+    )
 
-    _reg("find_http_services", find_http_services,
-         "find_http_services(name='') -> [{name, root_url, templates}]",
-         "business",
-         ["http", "сервис", "endpoint", "rest", "api"],
-         "FIND HTTP SERVICES:\n"
-         "  services = find_http_services()\n"
-         "  for s in services:\n"
-         "      print(f\"  {s['name']} (/{s['root_url']})\")\n"
-         "      for t in s['templates']:\n"
-         "          print(f\"    {t['template']}: {[m['http_method'] for m in t['methods']]}\")")
-    _reg("find_web_services", find_web_services,
-         "find_web_services(name='') -> [{name, namespace, operations}]",
-         "business",
-         ["soap", "wsdl", "веб", "web service", "ws"],
-         "FIND WEB SERVICES (SOAP):\n"
-         "  services = find_web_services()\n"
-         "  for s in services:\n"
-         "      print(f\"  {s['name']} ns={s['namespace']}\")\n"
-         "      for op in s['operations']:\n"
-         "          print(f\"    {op['name']}({', '.join(op['params'])}) -> {op['return_type']}\")")
-    _reg("find_xdto_packages", find_xdto_packages,
-         "find_xdto_packages(name='') -> [{name, namespace, types}]",
-         "business",
-         ["xdto", "пакет", "namespace", "схема", "тип данных"],
-         "FIND XDTO PACKAGES:\n"
-         "  pkgs = find_xdto_packages()\n"
-         "  for p in pkgs:\n"
-         "      print(f\"  {p['name']} ns={p['namespace']} types={len(p.get('types', []))}\")")
-    _reg("find_exchange_plan_content", find_exchange_plan_content,
-         "find_exchange_plan_content(name) -> [{ref, auto_record}]",
-         "business",
-         ["обмен", "exchange", "план обмена", "синхрониз", "регистрац"],
-         "FIND EXCHANGE PLAN CONTENT:\n"
-         "  content = find_exchange_plan_content('ОбменУправлениеПредприятием')\n"
-         "  for item in content:\n"
-         "      print(f\"  {item['ref']} auto_record={item['auto_record']}\")")
+    _reg(
+        "find_http_services",
+        find_http_services,
+        "find_http_services(name='') -> [{name, root_url, templates}]",
+        "business",
+        ["http", "сервис", "endpoint", "rest", "api"],
+        "FIND HTTP SERVICES:\n"
+        "  services = find_http_services()\n"
+        "  for s in services:\n"
+        "      print(f\"  {s['name']} (/{s['root_url']})\")\n"
+        "      for t in s['templates']:\n"
+        "          print(f\"    {t['template']}: {[m['http_method'] for m in t['methods']]}\")",
+    )
+    _reg(
+        "find_web_services",
+        find_web_services,
+        "find_web_services(name='') -> [{name, namespace, operations}]",
+        "business",
+        ["soap", "wsdl", "веб", "web service", "ws"],
+        "FIND WEB SERVICES (SOAP):\n"
+        "  services = find_web_services()\n"
+        "  for s in services:\n"
+        "      print(f\"  {s['name']} ns={s['namespace']}\")\n"
+        "      for op in s['operations']:\n"
+        "          print(f\"    {op['name']}({', '.join(op['params'])}) -> {op['return_type']}\")",
+    )
+    _reg(
+        "find_xdto_packages",
+        find_xdto_packages,
+        "find_xdto_packages(name='') -> [{name, namespace, types}]",
+        "business",
+        ["xdto", "пакет", "namespace", "схема", "тип данных"],
+        "FIND XDTO PACKAGES:\n"
+        "  pkgs = find_xdto_packages()\n"
+        "  for p in pkgs:\n"
+        "      print(f\"  {p['name']} ns={p['namespace']} types={len(p.get('types', []))}\")",
+    )
+    _reg(
+        "find_exchange_plan_content",
+        find_exchange_plan_content,
+        "find_exchange_plan_content(name) -> [{ref, auto_record}]",
+        "business",
+        ["обмен", "exchange", "план обмена", "синхрониз", "регистрац"],
+        "FIND EXCHANGE PLAN CONTENT:\n"
+        "  content = find_exchange_plan_content('ОбменУправлениеПредприятием')\n"
+        "  for item in content:\n"
+        "      print(f\"  {item['ref']} auto_record={item['auto_record']}\")",
+    )
 
-    _reg("detect_extensions", detect_extensions,
-         "detect_extensions() -> {config_role, nearby_extensions, nearby_main, warnings}",
-         "extension")
-    _reg("find_ext_overrides", find_ext_overrides,
-         "find_ext_overrides(ext_path, obj='') -> {overrides: [{annotation, target_method, extension_method, ...}]}",
-         "extension")
+    _reg(
+        "detect_extensions",
+        detect_extensions,
+        "detect_extensions() -> {config_role, nearby_extensions, nearby_main, warnings}",
+        "extension",
+    )
+    _reg(
+        "find_ext_overrides",
+        find_ext_overrides,
+        "find_ext_overrides(ext_path, obj='') -> {overrides: [{annotation, target_method, extension_method, ...}]}",
+        "extension",
+    )
 
-    _reg("help", bsl_help,
-         "help(task='') -> str  # get recipe: help('exports'), help('movements'), help('flow')",
-         "navigation")
+    _reg(
+        "help",
+        bsl_help,
+        "help(task='') -> str  # get recipe: help('exports'), help('movements'), help('flow')",
+        "navigation",
+    )
 
     # ── Return all helpers (auto-generated from registry) ────────
     return {

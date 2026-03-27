@@ -6,6 +6,7 @@ Architecture:
   as a child process instead of importing the server directly, so the HTTP
   server always runs in its own isolated Python environment.
 """
+
 import datetime
 import os
 import pathlib
@@ -19,7 +20,7 @@ import win32event
 import win32service
 import win32serviceutil
 
-from rlm_tools_bsl.service import CONFIG_FILE, _config_path, load_config, save_config
+from rlm_tools_bsl.service import _config_path, load_config, save_config
 
 SERVICE_NAME = "rlm-tools-bsl"
 SERVICE_DISPLAY = "RLM Tools BSL (MCP HTTP Server)"
@@ -29,6 +30,7 @@ _SERVICE_DESC_BASE = "RLM-инструменты для анализа 1C BSL-к
 def _get_service_desc() -> str:
     try:
         from importlib.metadata import version
+
         ver = version("rlm-tools-bsl")
     except Exception:
         ver = "?"
@@ -120,8 +122,12 @@ class RlmWindowsService(win32serviceutil.ServiceFramework):
             if restart_count <= max_restarts:
                 with open(log_path, "a", encoding="utf-8") as f:
                     _log_watchdog(
-                        f, "Process exited (code=%s health_fail=%s), restarting (%d/%d)...",
-                        exit_code, health_failed, restart_count, max_restarts,
+                        f,
+                        "Process exited (code=%s health_fail=%s), restarting (%d/%d)...",
+                        exit_code,
+                        health_failed,
+                        restart_count,
+                        max_restarts,
                     )
                 time.sleep(5)
 
@@ -150,7 +156,7 @@ def _load_env_file(path: str, env: dict) -> None:
                 v = v.strip().strip('"').strip("'")
                 # Strip inline comments: VALUE # comment
                 if "#" in v and not v.startswith("#"):
-                    v = v[:v.index("#")].rstrip()
+                    v = v[: v.index("#")].rstrip()
                 env.setdefault(k, v)
     except OSError:
         pass
@@ -239,11 +245,13 @@ def install(host: str, port: int, env_file: str | None) -> None:
 
     # Python runtime DLLs (python3.dll + python3XX.dll)
     # In venvs/uv tool envs, DLLs are in base_prefix, not prefix
-    for py_dir in dict.fromkeys([
-        pathlib.Path(sys.base_prefix),
-        pathlib.Path(sys.prefix),
-        pathlib.Path(sys.executable).resolve().parent,
-    ]):
+    for py_dir in dict.fromkeys(
+        [
+            pathlib.Path(sys.base_prefix),
+            pathlib.Path(sys.prefix),
+            pathlib.Path(sys.executable).resolve().parent,
+        ]
+    ):
         dlls_to_copy.extend(py_dir.glob("python3*.dll"))
 
     for dll in dlls_to_copy:

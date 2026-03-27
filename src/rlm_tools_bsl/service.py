@@ -1,4 +1,5 @@
 """Service management for rlm-tools-bsl HTTP server (Windows SC / Linux systemd)."""
+
 import json
 import os
 import pathlib
@@ -41,7 +42,11 @@ def handle_service_command(args) -> None:
     if sys.platform == "win32":
         try:
             from rlm_tools_bsl._service_win import (  # type: ignore[import]
-                install, uninstall, start, stop, status,
+                install,
+                uninstall,
+                start,
+                stop,
+                status,
             )
         except ImportError:
             print(
@@ -52,7 +57,11 @@ def handle_service_command(args) -> None:
             raise SystemExit(1)
     else:
         from rlm_tools_bsl._service_linux import (
-            install, uninstall, start, stop, status,
+            install,
+            uninstall,
+            start,
+            stop,
+            status,
         )
 
     action = args.service_action

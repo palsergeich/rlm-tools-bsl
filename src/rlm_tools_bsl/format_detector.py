@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
@@ -36,37 +36,39 @@ class BslFileInfo:
     is_form_module: bool
 
 
-METADATA_CATEGORIES: frozenset[str] = frozenset({
-    "CommonModules",
-    "Documents",
-    "Catalogs",
-    "AccumulationRegisters",
-    "InformationRegisters",
-    "AccountingRegisters",
-    "CalculationRegisters",
-    "Reports",
-    "DataProcessors",
-    "Constants",
-    "Enums",
-    "ChartsOfAccounts",
-    "ChartsOfCharacteristicTypes",
-    "ChartsOfCalculationTypes",
-    "CommonForms",
-    "CommonCommands",
-    "CommonTemplates",
-    "HTTPServices",
-    "WebServices",
-    "BusinessProcesses",
-    "Tasks",
-    "ExchangePlans",
-    "Roles",
-    "DocumentJournals",
-    "FilterCriteria",
-    "SettingsStorages",
-    "Subsystems",
-    "XDTOPackages",
-    "ExternalDataSources",
-})
+METADATA_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "CommonModules",
+        "Documents",
+        "Catalogs",
+        "AccumulationRegisters",
+        "InformationRegisters",
+        "AccountingRegisters",
+        "CalculationRegisters",
+        "Reports",
+        "DataProcessors",
+        "Constants",
+        "Enums",
+        "ChartsOfAccounts",
+        "ChartsOfCharacteristicTypes",
+        "ChartsOfCalculationTypes",
+        "CommonForms",
+        "CommonCommands",
+        "CommonTemplates",
+        "HTTPServices",
+        "WebServices",
+        "BusinessProcesses",
+        "Tasks",
+        "ExchangePlans",
+        "Roles",
+        "DocumentJournals",
+        "FilterCriteria",
+        "SettingsStorages",
+        "Subsystems",
+        "XDTOPackages",
+        "ExternalDataSources",
+    }
+)
 
 MODULE_TYPE_MAP: dict[str, str] = {
     "Module.bsl": "Module",
@@ -159,11 +161,9 @@ def parse_bsl_path(file_path: str, base_path: str) -> BslFileInfo:
     module_type: str | None = None
 
     # Find category in parts
-    category_index: int | None = None
     for i, part in enumerate(parts):
         if part in METADATA_CATEGORIES:
             category = part
-            category_index = i
             # Next part is the object name (if it exists and is not a known subdir)
             if i + 1 < len(parts) - 1:  # not the last part (last part is the filename)
                 object_name = parts[i + 1]
