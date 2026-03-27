@@ -2,9 +2,15 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+.uv-cache/
 dist/
+build/
 *.egg-info/
 .pytest_cache/
+htmlcov/
+.coverage
+*.db
+
 .env
 .mcp.local.json
 evals/ab_results/

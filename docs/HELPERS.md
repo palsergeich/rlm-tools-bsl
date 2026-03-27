@@ -59,32 +59,43 @@
 
 При наличии предварительно построенного SQLite-индекса (`rlm-bsl-index index build`) следующие хелперы работают мгновенно из базы данных вместо live-парсинга и обхода файловой системы:
 
-| Хелпер | С индексом | Без индекса |
-|--------|-----------|-------------|
-| `extract_procedures(path)` | `SELECT` из `methods` | Regex-парсинг .bsl |
-| `find_exports(path)` | `SELECT WHERE is_export=1` | Фильтр `extract_procedures` |
-| `find_callers_context(proc)` | `JOIN calls+methods+modules` | Параллельный scan+grep .bsl |
-| `find_event_subscriptions(obj)` | `SELECT` из `event_subscriptions` | XML-парсинг |
-| `find_scheduled_jobs(name)` | `SELECT` из `scheduled_jobs` | XML-парсинг |
-| `find_functional_options(obj)` | `SELECT` из `functional_options` | XML-парсинг |
-| `find_enum_values(name)` | `SELECT` из `enum_values` | Glob + XML-парсинг |
-| `analyze_subsystem(name)` | `SELECT` из `subsystem_content` | Glob + XML-парсинг |
-| `find_roles(obj)` | `SELECT` из `role_rights` | Парсинг Rights.xml |
-| `find_register_movements(doc)` | `SELECT` из `register_movements` | Grep по ObjectModule |
-| `find_register_writers(reg)` | `SELECT` из `register_movements` | Параллельный поиск |
-| `glob_files(pattern)` | `SELECT` из `file_paths` (поддерживаемые паттерны) | `pathlib.Path.glob()` |
-| `tree(path)` | `SELECT` из `file_paths` | Рекурсивный `iterdir()` |
-| `find_files(name)` | `SELECT` из `file_paths` с ранжированием | `os.walk()` |
-| `find_http_services(name)` | `SELECT` из `http_services` | Glob + XML-парсинг |
-| `find_web_services(name)` | `SELECT` из `web_services` | Glob + XML-парсинг |
-| `find_xdto_packages(name)` | `SELECT` из `xdto_packages` | Glob + XML-парсинг |
-| `find_exchange_plan_content(name)` | — (нет индексной таблицы) | Glob + XML-парсинг |
-| `search_methods(query)` | FTS5 (BM25) | Недоступен |
-| `search_objects(query)` | `SELECT` из `object_synonyms` с UDF `py_lower()` | Недоступен |
-| `search_regions(query)` | `SELECT` из `regions` | Недоступен |
-| `search_module_headers(query)` | `SELECT` из `module_headers` | Недоступен |
+| Хелпер                             | С индексом                                         | Без индекса                 |
+| ---------------------------------- | -------------------------------------------------- | --------------------------- |
+| `extract_procedures(path)`         | `SELECT` из `methods`                              | Regex-парсинг .bsl          |
+| `find_exports(path)`               | `SELECT WHERE is_export=1`                         | Фильтр `extract_procedures` |
+| `find_callers_context(proc)`       | `JOIN calls+methods+modules`                       | Параллельный scan+grep .bsl |
+| `find_event_subscriptions(obj)`    | `SELECT` из `event_subscriptions`                  | XML-парсинг                 |
+| `find_scheduled_jobs(name)`        | `SELECT` из `scheduled_jobs`                       | XML-парсинг                 |
+| `find_functional_options(obj)`     | `SELECT` из `functional_options`                   | XML-парсинг                 |
+| `find_enum_values(name)`           | `SELECT` из `enum_values`                          | Glob + XML-парсинг          |
+| `analyze_subsystem(name)`          | `SELECT` из `subsystem_content`                    | Glob + XML-парсинг          |
+| `find_roles(obj)`                  | `SELECT` из `role_rights`                          | Парсинг Rights.xml          |
+| `find_register_movements(doc)`     | `SELECT` из `register_movements`                   | Grep по ObjectModule        |
+| `find_register_writers(reg)`       | `SELECT` из `register_movements`                   | Параллельный поиск          |
+| `glob_files(pattern)`              | `SELECT` из `file_paths` (поддерживаемые паттерны) | `pathlib.Path.glob()`       |
+| `tree(path)`                       | `SELECT` из `file_paths`                           | Рекурсивный `iterdir()`     |
+| `find_files(name)`                 | `SELECT` из `file_paths` с ранжированием           | `os.walk()`                 |
+| `find_http_services(name)`         | `SELECT` из `http_services`                        | Glob + XML-парсинг          |
+| `find_web_services(name)`          | `SELECT` из `web_services`                         | Glob + XML-парсинг          |
+| `find_xdto_packages(name)`         | `SELECT` из `xdto_packages`                        | Glob + XML-парсинг          |
+| `find_exchange_plan_content(name)` | — (нет индексной таблицы)                          | Glob + XML-парсинг          |
+| `search_methods(query)`            | FTS5 (BM25)                                        | Недоступен                  |
+| `search_objects(query)`            | `SELECT` из `object_synonyms` с UDF `py_lower()`   | Недоступен                  |
+| `search_regions(query)`            | `SELECT` из `regions`                              | Недоступен                  |
+| `search_module_headers(query)`     | `SELECT` из `module_headers`                       | Недоступен                  |
 
 Подробности: [docs/INDEXING.md](INDEXING.md)
+
+## Совместимость с оригинальным rlm-tools
+
+Весь функционал оригинального [rlm-tools](https://github.com/stefanoshea/rlm-tools) сохранён:
+- Три MCP-инструмента (`rlm_start`, `rlm_execute`, `rlm_end`)
+- Все стандартные хелперы песочницы (`read_file`, `grep`, `glob_files`, `tree`, `llm_query` и др.)
+- Настройки (`RLM_MAX_SESSIONS`, `RLM_SESSION_TIMEOUT`, уровни effort)
+- Безопасность песочницы (read-only, ограниченные импорты, таймауты — 45 сек на Windows и Unix)
+- Работа с любыми кодовыми базами (не только 1С)
+
+BSL-функционал добавлен поверх, не ломая исходную механику.
 
 ## Расширения (CFE)
 
