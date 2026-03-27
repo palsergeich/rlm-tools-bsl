@@ -41,3 +41,5 @@ jobs:
 
       - name: Run benchmark
         run: uv run python benchmarks/run_benchmark.py
+        env:
+          PYTHONIOENCODING: utf-8
