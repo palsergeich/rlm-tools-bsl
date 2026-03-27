@@ -66,6 +66,15 @@ pip install --upgrade rlm-tools-bsl
 uv tool upgrade rlm-tools-bsl
 ```
 
+**Windows — установка + служба одной командой** (PowerShell от имени администратора):
+
+```powershell
+irm https://raw.githubusercontent.com/Dach-Coin/rlm-tools-bsl/master/simple-install-from-pip.ps1 -OutFile simple-install-from-pip.ps1
+PowerShell -ExecutionPolicy Bypass -File .\simple-install-from-pip.ps1
+```
+
+Скрипт установит пакет из PyPI, зарегистрирует Windows-службу, запустит сервер и проверит health. Повторный запуск обновит до последней версии.
+
 ### Вариант B: Из исходников (для разработки)
 
 ```bash

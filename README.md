@@ -26,6 +26,15 @@ uv tool install rlm-tools-bsl
 
 Обновление: `pip install --upgrade rlm-tools-bsl` или `uv tool upgrade rlm-tools-bsl`
 
+**Windows — установка + служба одной командой** (PowerShell от имени администратора):
+
+```powershell
+irm https://raw.githubusercontent.com/Dach-Coin/rlm-tools-bsl/master/simple-install-from-pip.ps1 -OutFile simple-install-from-pip.ps1
+PowerShell -ExecutionPolicy Bypass -File .\simple-install-from-pip.ps1
+```
+
+Скрипт установит пакет из PyPI, зарегистрирует Windows-службу, запустит сервер и проверит health. Повторный запуск — обновление до последней версии.
+
 ### Из исходников (для разработки)
 
 **Требования:** Python 3.10+, [uv](https://github.com/astral-sh/uv) (пакетный менеджер). LLM-ключи опциональны — без них работает базовый функционал.
@@ -78,7 +87,7 @@ chmod +x simple-install.sh && ./simple-install.sh
 
 **RAG** (Retrieval-Augmented Generation) — подход, при котором перед генерацией ответа LLM сначала ищет релевантные фрагменты из заранее проиндексированной базы знаний (эмбеддинги, граф зависимостей, полнотекстовый поиск). Требует предварительной индексации, инфраструктуры и обслуживания.
 
-**RLM** (Repository-Level Machine-coding) — подход, при котором AI-агент исследует репозиторий напрямую: выполняет поисковые запросы, читает файлы, анализирует структуру — всё в реальном времени, без предварительной индексации.
+**RLM** (Repository-Level Machine-coding) — подход, при котором AI-агент исследует репозиторий напрямую: выполняет поисковые запросы, читает файлы, анализирует структуру — всё в реальном времени, без предварительной векторной индексации.
 
 ## Зачем нужен RLM поверх встроенных готовых инструментов AI-ассистентов
 
