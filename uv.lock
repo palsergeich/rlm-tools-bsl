@@ -1109,7 +1109,7 @@ wheels = [
 
 [[package]]
 name = "rlm-tools-bsl"
-version = "1.4.3"
+version = "1.4.4"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -1123,6 +1123,9 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+]
+service = [
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -1146,8 +1149,9 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "pywin32", marker = "sys_platform == 'win32' and extra == 'service'", specifier = ">=306" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "service"]
 
 [package.metadata.requires-dev]
 dev = [

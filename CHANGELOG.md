@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.4] — 2026-03-27
+
+### Исправлено
+- **`service` extra опубликован в PyPI** — `pip install rlm-tools-bsl[service]` теперь корректно устанавливает `pywin32` на Windows. Ранее `service` был только в `[dependency-groups]` (локальная разработка), теперь также в `[project.optional-dependencies]`
+
 ## [1.4.3] — 2026-03-27
 
 ### Добавлено
