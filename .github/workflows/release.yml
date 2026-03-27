@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          # Extract version from tag (v1.4.2 -> 1.4.2)
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # Extract section for this version from CHANGELOG.md
+          # Matches from "## [VERSION]" until next "## [" or end of file
+          NOTES=$(awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
+
+          # Write to file (multi-line safe)
+          echo "$NOTES" > /tmp/release_notes.md
+
+          # Append link to full changelog
+          echo "" >> /tmp/release_notes.md
+          echo "Полный список изменений: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md)" >> /tmp/release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: /tmp/release_notes.md
+          generate_release_notes: false
