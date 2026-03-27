@@ -64,7 +64,7 @@ rlm_start(path="/path/to/1c-sources", query="find module SomeModule")
 - "Проанализируй модуль ОбщегоНазначения в My Config"
 - "Найди все экспортные процедуры в проекте DevERP"
 - "Покажи зарегистрированные проекты"
-- "Добавь в реестр проект TestBuh, путь /data/test-config"
+- "Добавь в реестр проект TestBuh, путь /data/test-config, описание 'Тестовая бухгалтерия'"
 - "Переименуй проект TestBuh в TestingBuh"
 - "Удали проект Test UNF из реестра"
 
