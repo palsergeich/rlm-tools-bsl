@@ -9,6 +9,12 @@ import pytest
 from rlm_tools_bsl.bsl_xml_parsers import parse_form_xml
 
 
+@pytest.fixture(autouse=True)
+def _isolate_index_dir(tmp_path, monkeypatch):
+    """Prevent RLM_INDEX_DIR leaking from other tests (e.g. test_config dotenv)."""
+    monkeypatch.setenv("RLM_INDEX_DIR", str(tmp_path / "idx"))
+
+
 # ── Test XML data ─────────────────────────────────────────────
 
 _EDT_FORM_XML = """\
