@@ -8,19 +8,6 @@
   - Исправлены обе ветки логики: live path resolution и index-based grouping (`_group_form_rows`)
   - Обновлены тестовые фикстуры для соответствия реальной структуре CF-выгрузки (Closes #4)
 
-## [1.6.0] — 2026-03-31 (Docker)
-
-### Инфраструктура
-
-- **Docker-поддержка** — `Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`
-  - Транспорт `streamable-http` (порт 8000), healthcheck
-  - Dev-режим с live mount исходников (`src/`, `tests/`, `docs/`)
-  - Сервис `rlm-build` для индексации проекта из контейнера
-  - Сервис `rlm-test` для запуска тестов в изолированном окружении
-- **Документация** — `docs/DOCKER.md`: полное руководство по деплою и интеграции с Claude Desktop
-- **Примеры** — `.env.docker.example`, `example.mcp-docker.json`
-- **Тест-скрипты** — `test-docker.sh` (Linux/macOS) и `test-docker.ps1` (Windows)
-
 ## [1.6.0] — 2026-03-30
 
 ### Добавлено
