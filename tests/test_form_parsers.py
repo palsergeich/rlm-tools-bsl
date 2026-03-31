@@ -470,7 +470,9 @@ class TestFormElementsIndex:
         forms_dir.mkdir(parents=True)
         (forms_dir / "Form.xml").write_text(_CF_FORM_XML, encoding="utf-8")
         (forms_dir / "Form").mkdir()
-        (forms_dir / "Form" / "Module.bsl").write_text("Процедура ПриСозданииНаСервере(Отказ)\nКонецПроцедуры", encoding="utf-8")
+        (forms_dir / "Form" / "Module.bsl").write_text(
+            "Процедура ПриСозданииНаСервере(Отказ)\nКонецПроцедуры", encoding="utf-8"
+        )
 
         # Create CommonForm
         cf_dir = tmp_path / "CommonForms" / "ОбщаяФорма1" / "Ext"
@@ -644,7 +646,9 @@ class TestFormElementsIndex:
         forms_dir.mkdir(parents=True)
         (forms_dir / "Form.xml").write_text(_CF_FORM_XML, encoding="utf-8")
         (forms_dir / "Form").mkdir()
-        (forms_dir / "Form" / "Module.bsl").write_text("Процедура ПриСозданииНаСервере(Отказ)\nКонецПроцедуры", encoding="utf-8")
+        (forms_dir / "Form" / "Module.bsl").write_text(
+            "Процедура ПриСозданииНаСервере(Отказ)\nКонецПроцедуры", encoding="utf-8"
+        )
 
         from rlm_tools_bsl.bsl_index import IndexBuilder
 
