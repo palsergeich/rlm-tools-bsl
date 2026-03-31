@@ -1789,10 +1789,13 @@ def make_bsl_helpers(
             # Determine module_path
             module_path = ""
             if full_fp.replace("\\", "/").endswith("Ext/Form.xml"):
-                form_dir = os.path.dirname(os.path.dirname(full_fp))
+                # CF: Ext/Form.xml → module at Ext/Form/Module.bsl
+                form_dir = os.path.dirname(full_fp)
+                _candidates: tuple[str, ...] = ("Form/Module.bsl", "Module.bsl")
             else:
                 form_dir = os.path.dirname(full_fp)
-            for candidate in ("Ext/Module.bsl", "Module.bsl"):
+                _candidates = ("Ext/Module.bsl", "Module.bsl")
+            for candidate in _candidates:
                 mp = os.path.join(form_dir, candidate)
                 if os.path.isfile(mp):
                     module_path = os.path.relpath(mp, base_path).replace("\\", "/")
@@ -1833,8 +1836,8 @@ def make_bsl_helpers(
                         # EDT: Form.form → Module.bsl in same dir
                         mp = file_path.rsplit("/", 1)[0] + "/Module.bsl"
                     elif file_path.endswith("Form.xml"):
-                        # CF: Ext/Form.xml → Ext/Module.bsl
-                        mp = file_path.rsplit("/", 1)[0] + "/Module.bsl"
+                        # CF: Ext/Form.xml → Ext/Form/Module.bsl
+                        mp = file_path.rsplit("/", 1)[0] + "/Form/Module.bsl"
                     else:
                         mp = ""
                     # Check if exists via glob
