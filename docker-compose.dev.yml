@@ -1,0 +1,62 @@
+# Development docker-compose configuration
+# Usage: docker-compose -f docker-compose.dev.yml up
+
+services:
+  rlm-server-dev:
+    build: .
+    container_name: rlm-tools-bsl-dev
+    ports:
+      - "9000:9000"
+    volumes:
+      # Mount entire project for live development
+      - .:/app
+      # Mount test data
+      - ./benchmarks/fixture:/data/fixture:ro
+      # Mount volume for index
+      - rlm-index-dev:/tmp/rlm-index
+
+    environment:
+      - RLM_MAX_SESSIONS=5
+      - RLM_SESSION_TIMEOUT=10
+      - RLM_INDEX_DIR=/tmp/rlm-index
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=DEBUG
+
+    # Override entrypoint for development
+    entrypoint: ["python", "-m", "rlm_tools_bsl"]
+    command: ["--transport", "streamable-http", "--host", "0.0.0.0", "--port", "9000"]
+
+    # Automatically restart on changes
+    restart: unless-stopped
+
+    # For debugging
+    stdin_open: true
+    tty: true
+
+  # Optional: run tests
+  # Usage: docker-compose -f docker-compose.dev.yml run --rm rlm-test
+  rlm-test:
+    build: .
+    container_name: rlm-tools-bsl-test
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    entrypoint: ["sh", "-c"]
+    command: ["pip install --no-cache-dir -e '.[dev]' && pytest tests/ -v --tb=short"]
+    profiles: ["test"]
+
+  # Optional: build index from benchmark fixture
+  rlm-index-build:
+    build: .
+    container_name: rlm-tools-bsl-index
+    volumes:
+      - ./benchmarks/fixture:/data:ro
+      - rlm-index-dev:/tmp/rlm-index
+    entrypoint: ["rlm-bsl-index"]
+    command: ["index", "build", "/data"]
+    profiles: ["index"]
+
+volumes:
+  rlm-index-dev:
+    driver: local

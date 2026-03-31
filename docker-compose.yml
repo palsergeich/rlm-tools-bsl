@@ -1,0 +1,44 @@
+services:
+  # MCP HTTP Server (default)
+  rlm-server:
+    build: .
+    container_name: rlm-tools-bsl
+    ports:
+      - "9000:9000"
+    volumes:
+      # Mount your 1C source code directory
+      - ./data:/data
+      # Optional: mount .env for environment variables
+      - ./.env:/app/.env:ro
+    environment:
+      # Core settings
+      - RLM_MAX_SESSIONS=5
+      - RLM_SESSION_TIMEOUT=10
+
+      # Optional: LLM query settings (see docs/ENV_REFERENCE.md)
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # - RLM_LLM_QUERY_ENDPOINT=
+      # - RLM_LLM_QUERY_MODEL=
+
+    command: ["--transport", "streamable-http", "--host", "0.0.0.0", "--port", "9000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  # CLI service for index building (optional, run as needed)
+  rlm-cli:
+    build: .
+    entrypoint: rlm-bsl-index
+    volumes:
+      - ./data:/data
+      - ./.env:/app/.env:ro
+    environment:
+      - RLM_INDEX_DIR=/data/.rlm-index
+    # Usage: docker-compose run --rm rlm-cli index build /data/my-project
+    # or:    docker-compose run --rm rlm-cli index info /data/my-project
+    profiles: ["cli"]
