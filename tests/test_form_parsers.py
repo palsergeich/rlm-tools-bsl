@@ -336,7 +336,8 @@ class TestParseFormHelper:
         forms_dir = tmp_path / "Documents" / "РеализацияТоваровУслуг" / "Forms" / "ФормаДокумента" / "Ext"
         forms_dir.mkdir(parents=True)
         (forms_dir / "Form.xml").write_text(_CF_FORM_XML, encoding="utf-8")
-        (forms_dir / "Module.bsl").write_text("// module", encoding="utf-8")
+        (forms_dir / "Form").mkdir()
+        (forms_dir / "Form" / "Module.bsl").write_text("// module", encoding="utf-8")
 
         # Create CommonForm
         cf_dir = tmp_path / "CommonForms" / "ОбщаяФормаНастроек" / "Ext"
@@ -350,7 +351,8 @@ class TestParseFormHelper:
 </Form>
 """
         (cf_dir / "Form.xml").write_text(cf_form_xml, encoding="utf-8")
-        (cf_dir / "Module.bsl").write_text("// common form module", encoding="utf-8")
+        (cf_dir / "Form").mkdir()
+        (cf_dir / "Form" / "Module.bsl").write_text("// common form module", encoding="utf-8")
 
         from rlm_tools_bsl.bsl_helpers import make_bsl_helpers
 
@@ -672,7 +674,8 @@ class TestParseFormParity:
         forms_dir = tmp_path / "Documents" / "ТестПаритет" / "Forms" / "ФормаДок" / "Ext"
         forms_dir.mkdir(parents=True)
         (forms_dir / "Form.xml").write_text(_CF_FORM_XML, encoding="utf-8")
-        (forms_dir / "Module.bsl").write_text("// module", encoding="utf-8")
+        (forms_dir / "Form").mkdir()
+        (forms_dir / "Form" / "Module.bsl").write_text("// module", encoding="utf-8")
 
         base = str(tmp_path)
 
@@ -781,7 +784,8 @@ class TestParseFormParityEmpty:
 </Form>
 """
         (forms_dir / "Form.xml").write_text(empty_xml, encoding="utf-8")
-        (forms_dir / "Module.bsl").write_text("// empty module", encoding="utf-8")
+        (forms_dir / "Form").mkdir()
+        (forms_dir / "Form" / "Module.bsl").write_text("// empty module", encoding="utf-8")
 
         base = str(tmp_path)
 
