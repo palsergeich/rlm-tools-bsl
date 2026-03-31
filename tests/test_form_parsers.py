@@ -469,7 +469,8 @@ class TestFormElementsIndex:
         forms_dir = tmp_path / "Documents" / "Тест" / "Forms" / "ФормаДок" / "Ext"
         forms_dir.mkdir(parents=True)
         (forms_dir / "Form.xml").write_text(_CF_FORM_XML, encoding="utf-8")
-        (forms_dir / "Module.bsl").write_text("Процедура ПриСозданииНаСервере(Отказ)\nКонецПроцедуры", encoding="utf-8")
+        (forms_dir / "Form").mkdir()
+        (forms_dir / "Form" / "Module.bsl").write_text("Процедура ПриСозданииНаСервере(Отказ)\nКонецПроцедуры", encoding="utf-8")
 
         # Create CommonForm
         cf_dir = tmp_path / "CommonForms" / "ОбщаяФорма1" / "Ext"
@@ -569,7 +570,8 @@ class TestFormElementsIndex:
         forms_dir = tmp_path / "Documents" / "Тест2" / "Forms" / "Ф1" / "Ext"
         forms_dir.mkdir(parents=True)
         (forms_dir / "Form.xml").write_text(_CF_FORM_XML, encoding="utf-8")
-        (forms_dir / "Module.bsl").write_text("// empty", encoding="utf-8")
+        (forms_dir / "Form").mkdir()
+        (forms_dir / "Form" / "Module.bsl").write_text("// empty", encoding="utf-8")
 
         from rlm_tools_bsl.bsl_index import IndexBuilder
 
@@ -618,7 +620,8 @@ class TestFormElementsIndex:
 </Form>
 """
         (forms_dir / "Form.xml").write_text(empty_xml, encoding="utf-8")
-        (forms_dir / "Module.bsl").write_text("// empty", encoding="utf-8")
+        (forms_dir / "Form").mkdir()
+        (forms_dir / "Form" / "Module.bsl").write_text("// empty", encoding="utf-8")
 
         from rlm_tools_bsl.bsl_index import IndexBuilder
 
@@ -640,7 +643,8 @@ class TestFormElementsIndex:
         forms_dir = tmp_path / "Documents" / "Тест3" / "Forms" / "Ф1" / "Ext"
         forms_dir.mkdir(parents=True)
         (forms_dir / "Form.xml").write_text(_CF_FORM_XML, encoding="utf-8")
-        (forms_dir / "Module.bsl").write_text("Процедура ПриСозданииНаСервере(Отказ)\nКонецПроцедуры", encoding="utf-8")
+        (forms_dir / "Form").mkdir()
+        (forms_dir / "Form" / "Module.bsl").write_text("Процедура ПриСозданииНаСервере(Отказ)\nКонецПроцедуры", encoding="utf-8")
 
         from rlm_tools_bsl.bsl_index import IndexBuilder
 
