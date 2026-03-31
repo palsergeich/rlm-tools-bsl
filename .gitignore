@@ -18,3 +18,4 @@ htmlcov/
 evals/ab_results/
 docs/plans/
 tmp/
+test-data/
