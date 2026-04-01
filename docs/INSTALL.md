@@ -249,7 +249,7 @@ uv tool install . --force
 
 ## 3. (Опционально) Настройка llm_query
 
-См. раздел «Настройка llm_query» в [README.md](README.md#настройка-llm_query-опционально).
+См. раздел «Настройка llm_query» в [README.md](../README.md#настройка-llm_query-опционально).
 
 ## 4. Настроить MCP
 
