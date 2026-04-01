@@ -18,7 +18,7 @@
 | --- | ----------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------- |
 | L1  | Ручная установка              | pip доступен      | `pip install rlm-tools-bsl` → `rlm-tools-bsl --transport streamable-http`. Подробнее → [INSTALL.md](INSTALL.md) |
 | L2  | Установка скриптами (systemd) | sudo              | Запустить `simple-install-from-pip.sh` → systemd-сервис. Подробнее → [INSTALL.md](INSTALL.md)                   |
-| L3  | Docker                        | Docker установлен | Аналогично W3                                                                                                   |
+| L3  | Docker (рекомендуется)        | Docker установлен | `docker compose up -d` → авто-обновление из PyPI. Нативный Docker без VM-прослойки — полная скорость I/O. Подробнее → [INSTALL.md](INSTALL.md#вариант-b-docker) |
 
 ### Установка как пакета (требуется Python 3.10+)
 
