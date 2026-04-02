@@ -411,7 +411,9 @@ class TestStrategyWithIndex:
 
     def test_strategy_without_index(self):
         strategy = get_strategy("medium", None)
-        assert "== INDEX ==" not in strategy
+        assert "== INDEX ==" in strategy
+        assert "No pre-built index" in strategy
+        assert "NEVER call rlm_index" in strategy
 
     def test_strategy_quick_check_note(self):
         """Strategy includes quick check note when index is loaded."""

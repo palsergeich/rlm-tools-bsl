@@ -987,11 +987,28 @@ async def rlm_index(
     no_metadata: Annotated[bool, Field(description="Skip L2 metadata (build only)")] = False,
     no_fts: Annotated[bool, Field(description="Skip FTS5 full-text index (build only)")] = False,
     no_synonyms: Annotated[bool, Field(description="Skip object synonyms (build only)")] = False,
+    confirm: Annotated[
+        str | None,
+        Field(description="Confirmation for build/drop. Only pass if the user explicitly said 'yes' or 'build'."),
+    ] = None,
 ) -> str:
     """Manage the BSL method index — build, update, get info, or drop.
     Full parity with CLI 'rlm-bsl-index'. Use 'build' to create index from scratch,
     'update' for incremental refresh, 'info' for statistics, 'drop' to remove the index.
-    Provide either 'path' (filesystem path) or 'project' (registered project name)."""
+    Provide either 'path' (filesystem path) or 'project' (registered project name).
+    'build' and 'drop' require user confirmation — tell the user and wait for explicit approval."""
+    _CONFIRM_SECRET = "user_approved"
+    if action in ("build", "drop") and confirm != _CONFIRM_SECRET:
+        return json.dumps(
+            {
+                "confirmation_required": True,
+                "action": action,
+                "message": f"Index {action} takes 5-10 minutes on large configs. "
+                "Tell the user and WAIT for their explicit approval. "
+                "Do NOT proceed automatically — the user must say 'yes' or 'build the index'.",
+            },
+            ensure_ascii=False,
+        )
     return await anyio.to_thread.run_sync(
         lambda: _rlm_index(
             action=action,

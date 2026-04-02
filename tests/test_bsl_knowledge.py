@@ -169,12 +169,13 @@ def test_rlm_execute_description():
 
 def test_business_recipes_structure():
     """All domains must have compact and full keys."""
-    assert len(_BUSINESS_RECIPES) == 7
+    assert len(_BUSINESS_RECIPES) == 8
     for domain, recipe in _BUSINESS_RECIPES.items():
         assert "compact" in recipe, f"{domain}: missing compact"
         assert "full" in recipe, f"{domain}: missing full"
         assert len(recipe["compact"]) >= 3, f"{domain}: compact too short"
-        assert len(recipe["full"]) >= 6 or domain == "интеграция", f"{domain}: full too short"
+        min_full = 3 if domain == "тип реквизита" else 6
+        assert len(recipe["full"]) >= min_full or domain == "интеграция", f"{domain}: full too short"
 
 
 def test_match_recipe_found():

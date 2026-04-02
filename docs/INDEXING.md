@@ -11,7 +11,7 @@
 | Таблица символов (методы/функции) | tree-sitter → JSON API | ctags / tree-sitter            | —                    | regex-парсинг → SQLite `methods` (569K методов ERP)                                                      |
 | Граф вызовов                      | нет                    | «файл → символ» + PageRank     | нет                  | эвристический regex → SQLite `calls` (4.5M рёбер ERP). PageRank — Future, данные есть                    |
 | Полнотекстовый поиск              | нет                    | нет                            | BM25 (Elasticsearch) | FTS5 trigram + BM25, встроен в SQLite (`search_methods`)                                                 |
-| Метаданные конфигурации           | нет                    | нет                            | нет                  | `index_meta` (имя, версия, формат, роль), Level-2: ES/SJ/FO, Level-5: HTTP/WS/XDTO (6 таблиц метаданных) |
+| Метаданные конфигурации           | нет                    | нет                            | нет                  | `index_meta` (имя, версия, формат, роль), 17 таблиц метаданных (ES/SJ/FO/HTTP/WS/XDTO/synonyms/regions/headers/overrides/forms/attributes/predefined и др.) |
 | Прозрачная интеграция             | отдельный API          | карта для промпта              | отдельный сервис     | хелперы автоматически ускоряются при наличии индекса, fallback на live-парсинг                           |
 | Инкрементальное обновление        | нет                    | полная перестройка             | нет                  | `index update` — только изменённые/новые/удалённые файлы (10–20с vs 6 мин full build)                    |
 | Зависимости                       | Rust + tree-sitter     | tree-sitter / ctags + networkx | Elasticsearch        | чистый Python + SQLite (stdlib), ноль внешних зависимостей                                               |
@@ -69,6 +69,16 @@
 
 Вместо `project` можно указать `path`. Опции build: `no_calls`, `no_metadata`, `no_fts`, `no_synonyms`.
 
+### Подтверждение пользователя (confirm)
+
+Действия `build` и `drop` требуют явного подтверждения пользователя. Если AI-модель вызывает `rlm_index(action="build")` без подтверждения, сервер возвращает JSON с `confirmation_required: true` и инструкцией спросить пользователя. Модель должна показать пользователю сообщение и дождаться явного согласия ("да", "строй", "build").
+
+**Зачем это нужно:** при E2E-тестировании слабые модели (Grok Code Fast 1, Kilo Auto) при обнаружении отсутствующего индекса самостоятельно вызывали `rlm_index(action='build')`, не спрашивая пользователя. Построение индекса занимает 5-10 минут на больших конфигурациях и блокирует I/O сервера на всё это время. Confirm-механизм гарантирует, что только пользователь решает, когда строить индекс.
+
+### Блокировка параллельных сборок (build lock)
+
+При запуске `build` или `update` сервер захватывает эксклюзивную файловую блокировку (`method_index.lock` рядом с БД). Если другой процесс уже строит индекс для этого же пути — возвращается ошибка `RuntimeError` вместо повреждения БД. Блокировка реентрантна в рамках одного процесса (последовательные `build` + `update`), использует OS-level locking (`msvcrt.locking` на Windows, `fcntl.flock` на Linux) и автоматически освобождается при аварийном завершении процесса.
+
 ## 4. CLI-команды
 
 ### Полное построение
@@ -81,7 +91,7 @@ rlm-bsl-index index build <path> [--no-calls] [--no-metadata] [--no-fts] [--no-s
 
 Флаги:
 - `--no-calls` — отключает построение графа вызовов (значительно ускоряет сборку)
-- `--no-metadata` — отключает парсинг таблиц метаданных (EventSubscriptions, ScheduledJobs, FunctionalOptions, HTTPServices, WebServices, XDTOPackages)
+- `--no-metadata` — отключает парсинг таблиц метаданных (EventSubscriptions, ScheduledJobs, FunctionalOptions, HTTPServices, WebServices, XDTOPackages, FormElements)
 - `--no-fts` — отключает построение FTS5-индекса полнотекстового поиска
 - `--no-synonyms` — отключает построение таблицы синонимов объектов (`object_synonyms`)
 
@@ -94,8 +104,8 @@ Call graph:  yes
 Metadata:    yes
 FTS search:  yes
 
-Index built in 633.0s
-  Index:    v10
+Index built in 511.6s
+  Index:    v11
   Config:   УправлениеПредприятием 2.5.14.59
   Format:   cf
   Modules:  23461
@@ -107,7 +117,7 @@ Index built in 633.0s
   FuncOpts:   929
   Synonyms:   13661
   FilePaths:  103128
-  DB size:  1291.1 MB
+  DB size:  1322.5 MB
   DB path:  C:\Users\user\.cache\rlm-tools-bsl\a1b2c3d4e5f6\method_index.db
 ```
 
@@ -144,7 +154,7 @@ rlm-bsl-index index info <path>
 ```
 $ rlm-bsl-index index info "D:\ERP\src\cf"
 Index: C:\Users\user\.cache\rlm-tools-bsl\a1b2c3d4e5f6\method_index.db
-  Index:    v10
+  Index:    v11
   Config:   УправлениеПредприятием 2.5.14.59
   Format:   cf
   Status:   fresh
@@ -158,7 +168,7 @@ Index: C:\Users\user\.cache\rlm-tools-bsl\a1b2c3d4e5f6\method_index.db
   Synonyms:   13661
   FilePaths:  103128
   FTS:      yes
-  DB size:  1291.1 MB
+  DB size:  1322.5 MB
   Built:    10s ago
   BSL files on disk: 23461
 ```
@@ -182,7 +192,7 @@ $ rlm-bsl-index index drop D:\ERP\src
 
 ## 5. Структура индекса
 
-Индекс хранится в SQLite-базе `method_index.db` и содержит 18 таблиц (4 основные + 13 метаданных + 1 навигационная) + виртуальную FTS5-таблицу для полнотекстового поиска:
+Индекс хранится в SQLite-базе `method_index.db` и содержит 22 таблицы (4 основные + 17 метаданных + 1 навигационная) + виртуальную FTS5-таблицу для полнотекстового поиска:
 
 ### index_meta
 
@@ -190,8 +200,8 @@ $ rlm-bsl-index index drop D:\ERP\src
 
 | key                     | Описание                                                | Пример                             |
 | ----------------------- | ------------------------------------------------------- | ---------------------------------- |
-| `version`               | Версия схемы                                            | `10`                               |
-| `builder_version`       | Версия построителя                                      | `10`                               |
+| `version`               | Версия схемы                                            | `11`                               |
+| `builder_version`       | Версия построителя                                      | `11`                               |
 | `bsl_count`             | Количество .bsl файлов                                  | `23461`                            |
 | `paths_hash`            | MD5-хеш отсортированных путей                           | `6c4e5a0f0d506f67...`              |
 | `built_at`              | Unix-timestamp построения                               | `1773740509.56`                    |
@@ -214,6 +224,10 @@ $ rlm-bsl-index index drop D:\ERP\src
 | `file_paths_count`      | Количество записей в таблице file_paths                 | `35000`                            |
 | `has_form_elements`     | Есть ли таблица form_elements (0/1)                     | `1`                                |
 | `form_elements_count`   | Количество записей в таблице form_elements              | `250000`                           |
+| `has_object_attributes` | Есть ли таблица object_attributes (0/1)                 | `1`                                |
+| `object_attributes_count` | Количество записей в таблице object_attributes        | `72663`                            |
+| `has_predefined_items`  | Есть ли таблица predefined_items (0/1)                  | `1`                                |
+| `predefined_items_count` | Количество записей в таблице predefined_items          | `4006`                             |
 
 ### modules
 
@@ -561,7 +575,68 @@ LIMIT 30;
 
 **Обратная совместимость:** на v9 индексе `get_form_elements()` возвращает `None` через `try/except OperationalError`. `update()` создаёт и заполняет таблицу через `CREATE TABLE IF NOT EXISTS`.
 
-**Замеры на реальных конфигурациях:**
+### object_attributes (Level-10, v11+)
+
+Реквизиты, измерения, ресурсы и колонки табличных частей объектов метаданных. Строится при `build_synonyms=True` (по умолчанию). Парсинг XML: CF (`Category/Name.xml` — sibling-файл рядом с папкой объекта), EDT (`Name/Name.mdo`).
+
+| Колонка        | Тип        | Описание                                          | Пример                                              |
+| -------------- | ---------- | ------------------------------------------------- | --------------------------------------------------- |
+| `id`           | INTEGER PK | Идентификатор                                     | `1`                                                 |
+| `object_name`  | TEXT       | Имя объекта                                       | `РеализацияТоваровУслуг`                            |
+| `category`     | TEXT       | Категория объекта (English)                       | `Documents` / `Catalogs` / `InformationRegisters`   |
+| `attr_name`    | TEXT       | Техническое имя реквизита                         | `Организация`                                       |
+| `attr_synonym` | TEXT       | Синоним (отображаемое имя)                        | `Организация`                                       |
+| `attr_type`    | TEXT       | JSON-массив типов                                 | `["CatalogRef.Организации"]`                        |
+| `attr_kind`    | TEXT       | Вид: attribute / dimension / resource / column    | `attribute`                                         |
+| `ts_name`      | TEXT       | Имя табличной части (для kind=column), иначе NULL | `Товары`                                            |
+
+Поддерживаемые категории (6): Documents, Catalogs, InformationRegisters, AccumulationRegisters, ChartsOfCharacteristicTypes, AccountingRegisters.
+
+Виды реквизитов (`attr_kind`):
+- `attribute` — реквизиты объекта (Attributes)
+- `dimension` — измерения регистра (Dimensions)
+- `resource` — ресурсы регистра (Resources)
+- `column` — колонки табличной части (TabularSection → Attributes), `ts_name` заполняется
+
+Типы (`attr_type`) нормализуются из XML-формата: `xs:string` → `String`, `cfg:CatalogRef.Номенклатура` → `CatalogRef.Номенклатура`, `d4p1:CatalogRef.*` → `CatalogRef.*`. Составные типы хранятся как JSON-массив: `["CatalogRef.Организации", "String"]`.
+
+Индексы: `idx_oa_object` (object_name NOCASE), `idx_oa_attr` (attr_name NOCASE), `idx_oa_cat` (category).
+
+**IndexReader API:**
+- `get_object_attributes(object_name, category, attr_name, kind)` — все параметры опциональные, UDF `py_lower()` для case-insensitive поиска
+
+Ускоряет хелперы: `find_attributes()`.
+
+### predefined_items (Level-10, v11+)
+
+Предопределённые элементы справочников, планов видов характеристик, планов счетов. Строится при `build_synonyms=True` (по умолчанию). Парсинг: CF (`Predefined.xml` в каталоге объекта), EDT (inline в `.mdo`).
+
+| Колонка       | Тип        | Описание                    | Пример                                   |
+| ------------- | ---------- | --------------------------- | ---------------------------------------- |
+| `id`          | INTEGER PK | Идентификатор               | `1`                                      |
+| `object_name` | TEXT       | Имя объекта                 | `ВидыНоменклатуры`                       |
+| `category`    | TEXT       | Категория (English)         | `Catalogs`                               |
+| `item_name`   | TEXT       | Техническое имя элемента    | `Товар`                                  |
+| `item_synonym`| TEXT       | Синоним элемента             | `Товар`                                  |
+| `types`       | TEXT       | JSON типов (для ПВХ)        | `["CatalogRef.Номенклатура"]` или `null` |
+| `item_code`   | TEXT       | Код элемента                | `000000001` или `null`                   |
+
+Поддерживаемые категории: Catalogs, ChartsOfCharacteristicTypes, ChartsOfAccounts.
+
+Индексы: `idx_pi_object` (object_name NOCASE), `idx_pi_item` (item_name NOCASE).
+
+**IndexReader API:**
+- `get_predefined_items(object_name, item_name)` — оба параметра опциональные, UDF `py_lower()` для case-insensitive поиска
+
+Ускоряет хелперы: `find_predefined()`.
+
+**Замеры на реальных конфигурациях (object_attributes + predefined_items):**
+
+| Конфигурация | Формат | object_attributes | predefined_items |
+|-------------|--------|-------------------|------------------|
+| ЕРП 2.5.14 (23K модулей) | CF | 72 663 | 4 006 |
+| БГУ 2.0.105 (14K модулей) | CF | 38 003 | 1 991 |
+| ЕРП 2.5.7 (20K модулей) | EDT | 67 369 | 4 408 |
 
 | Конфигурация | Формат | form_elements | handlers | commands | attributes | Прирост DB |
 |-------------|--------|--------------|----------|----------|------------|-----------|
@@ -646,6 +721,12 @@ LIMIT 30;
 | `tree(path)`                    | `SELECT` из `file_paths` + Python-форматирование (мгновенно)       | Рекурсивный `iterdir()`                 |
 | `find_files(name)`              | `SELECT` из `file_paths` с ранжированием (мгновенно)               | `os.walk()` + in-memory поиск           |
 | `search_methods(query)`         | FTS5 (BM25) (мгновенно)                                            | Недоступен                              |
+| `search_objects(query)`         | `SELECT` из `object_synonyms` с UDF `py_lower()` (мгновенно)       | Недоступен                              |
+| `search_regions(query)`         | `SELECT` из `regions` (мгновенно)                                   | Недоступен                              |
+| `search_module_headers(query)`  | `SELECT` из `module_headers` (мгновенно)                            | Недоступен                              |
+| `find_attributes(name)`        | `SELECT` из `object_attributes` (мгновенно)                         | Live XML-парсинг                        |
+| `find_predefined(name)`        | `SELECT` из `predefined_items` (мгновенно)                          | Live XML-парсинг                        |
+| `parse_form(object_name)`      | `SELECT` из `form_elements` (мгновенно)                             | Glob + XML-парсинг                      |
 
 ### search_methods — полнотекстовый поиск
 
@@ -670,7 +751,7 @@ for r in results:
 ```
 == INDEX ==
 Pre-built method index loaded (569068 methods, 4554311 call edges, config: УправлениеПредприятием v2.5.14.59).
-extract_procedures() / find_callers_context() / find_event_subscriptions() return instantly from index.
+extract_procedures() / find_callers_context() / find_event_subscriptions() / find_attributes() / find_predefined() return instantly from index.
 search_methods(query) — full-text search by method name substring.
 ```
 
@@ -708,7 +789,7 @@ search_methods(query) — full-text search by method name substring.
 - **UNIQUE(module_id, name, line)** — парсер может создать дубликаты для нестандартного кода (например, несколько процедур с одинаковым именем в одном модуле). При конфликте используется `INSERT OR REPLACE`
 - **Переименование методов** — инкрементальное обновление не пересчитывает входящие рёбра в `calls`, если метод был переименован. Для полной корректности графа после массовых переименований рекомендуется `index build`
 - **Точность mtime** — зависит от файловой системы (FAT32 — 2 сек, NTFS — 100 нс, ext4 — 1 нс). Допуск в 1 секунду учтён при сравнении
-- **Время первого построения** — на ERP полный `index build` (calls + metadata + FTS + synonyms + form_elements): CF (~23K модулей, ЕРП 2.5.14) — **~633с**, EDT (~20K модулей, ЕРП 2.5.7) — **~383с**, CF (БГУ 2.0.105, ~14K модулей) — **~373с**. FTS добавляет ~5 секунд, synonyms добавляет ~3-5 секунд. Без графа вызовов (`--no-calls`) — ~30-90 секунд
+- **Время первого построения** — на ERP полный `index build` (calls + metadata + FTS + synonyms + form_elements + attributes + predefined): CF (~23K модулей, ЕРП 2.5.14) — **~512с**, EDT (~20K модулей, ЕРП 2.5.7) — **~448с**, CF (БГУ 2.0.105, ~14K модулей) — **~324с**. FTS добавляет ~5 секунд, synonyms добавляет ~3-5 секунд. Без графа вызовов (`--no-calls`) — ~30-90 секунд
 - **Потребление памяти при построении** — все результаты парсинга (методы + вызовы) накапливаются в ОЗУ до момента записи в SQLite. На конфигурации ERP пиковое потребление составляет ~3 GB RAM. Если на машине мало оперативной памяти, используйте `--no-calls` для снижения нагрузки
 - **`extension_purpose`** — ключ в `index_meta` присутствует только для расширений (`config_role = extension`). Для основных конфигураций не записывается
-- **Размер БД** — CF (ЕРП 2.5.14, 23K модулей): **~1291 MB** (calls + metadata + FTS + synonyms + form_elements), 13 661 синонимов, 258K form_elements. EDT (ЕРП 2.5.7, 20K модулей): **~1078 MB**, 17 218 синонимов, 196K form_elements. CF (БГУ 2.0.105, 14K модулей): **~839 MB**, 7 329 синонимов, 187K form_elements. Без FTS (`--no-fts`) — на ~230 MB меньше. Без графа вызовов (`--no-calls`) — ~35 MB
+- **Размер БД** — CF (ЕРП 2.5.14, 23K модулей): **~1323 MB** (calls + metadata + FTS + synonyms + form_elements + attributes + predefined). EDT (ЕРП 2.5.7, 20K модулей): **~1112 MB**. CF (БГУ 2.0.105, 14K модулей): **~854 MB**. Без FTS (`--no-fts`) — на ~230 MB меньше. Без графа вызовов (`--no-calls`) — ~35 MB

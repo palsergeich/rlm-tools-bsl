@@ -189,7 +189,7 @@ class TestSearchDiversity:
         """No single source_type should exceed per-source quota."""
         bsl, _ = full_index
         results = bsl["search"]("Заполнение", limit=30)
-        per_source = max(30 // 4, 3)
+        per_source = max(30 // 6, 3)
         from collections import Counter
 
         counts = Counter(r["source_type"] for r in results)

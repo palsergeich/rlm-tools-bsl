@@ -28,6 +28,8 @@
 - `parse_form(object_name, form_name='', handler='')` — парсинг XML форм 1С: обработчики событий (scope: form/ext_info/element), команды формы (command→action), атрибуты (DynamicList, mainTable, queryText). Grouped output по формам с `module_path` для перехода к BSL-модулю. Обратный поиск: `handler='ПроцИмя'` находит привязку процедуры к элементу/событию. Поддержка CommonForms. При наличии SQLite-индекса (v10+) — мгновенный ответ из таблицы `form_elements`
 - `analyze_subsystem(name)` — найти подсистему по имени или по содержимому (обратный поиск: какие подсистемы содержат данный объект). При наличии SQLite-индекса — мгновенный ответ из нормализованной таблицы `subsystem_content`. Без индекса — glob + XML-парсинг
 - `find_custom_modifications(object_name, custom_prefixes=None)` — найти все нетиповые доработки в модулях объекта: процедуры с нетиповым префиксом, нетиповые `#Область`, нетиповые реквизиты в XML. Префиксы авто-определяются из кодовой базы (порог 3 для основной конфигурации, 1 для расширений). В ответе — `prefix_source` (user/auto), `prefixes_used`, диагностическое поле `parse_error` при ошибке парсинга XML. Поддерживает EDT-формат `.mdo` (авто-резолв `{path}/{Name}.mdo`)
+- `find_attributes(name='', object_name='', category='', kind='')` — поиск реквизитов, измерений, ресурсов и колонок ТЧ по имени, объекту или категории. **При наличии SQLite-индекса v11+** — мгновенный ответ из таблицы `object_attributes`. Без индекса — live XML-парсинг. Возвращает object_name, category, attr_name, attr_synonym, attr_type (JSON-массив типов), attr_kind (attribute/dimension/resource/column), ts_name
+- `find_predefined(name='', object_name='')` — поиск предопределённых элементов справочников, ПВХ, планов счетов. **При наличии SQLite-индекса v11+** — мгновенный ответ из таблицы `predefined_items`. Без индекса — live XML-парсинг (CF: Predefined.xml, EDT: .mdo). Возвращает object_name, category, item_name, item_synonym, types, item_code
 - `analyze_object(name)` — комплексный профиль объекта за один вызов: XML-метаданные (реквизиты, ТЧ, измерения) + все модули + процедуры + экспорты
 - `find_event_subscriptions(object_name, custom_only=False)` — подписки на события (что срабатывает при записи/проведении). Фильтрация по имени объекта, включая catch-all подписки (source_count=0). `custom_only=True` — только нетиповые (по авто-определённым префиксам)
 - `find_scheduled_jobs(name)` — регламентные (фоновые) задания, поиск по имени
@@ -41,7 +43,7 @@
 - `find_enum_values(enum_name)` — значения перечисления с синонимами. При наличии SQLite-индекса — мгновенный ответ из таблицы `enum_values`. Без индекса — glob + XML-парсинг
 - `extract_queries(path)` — извлечение встроенных запросов 1С из BSL-модуля: парсит `Запрос.Текст = "..."` и многострочные `|`-тексты, определяет таблицы (`ИЗ РегистрНакопления.X`, `СОЕДИНЕНИЕ Справочник.Y`) и процедуру-владельца запроса
 - `code_metrics(path)` — метрики BSL-модуля: общее число строк, строк кода/комментариев/пустых, число процедур и экспортных, средний размер процедуры, максимальная вложенность (`Если/Для/Пока`)
-- `search(query, scope='all', limit=30)` — универсальный broad-first поиск: методы, объекты (синонимы), области, заголовки модулей. Fan-out по `search_methods`, `search_objects`, `search_regions`, `search_module_headers` с per-source квотой. Scope: `"all"`, `"methods"`, `"objects"`, `"regions"`, `"headers"`. Browse mode при пустом query + конкретный scope. Graceful degradation при отсутствии таблиц. Возвращает text, source_type, object_name, path, path_kind, detail
+- `search(query, scope='all', limit=30)` — универсальный broad-first поиск: методы, объекты (синонимы), области, заголовки модулей, реквизиты, предопределённые. Fan-out по `search_methods`, `search_objects`, `search_regions`, `search_module_headers`, `find_attributes`, `find_predefined` с per-source квотой. Scope: `"all"`, `"methods"`, `"objects"`, `"regions"`, `"headers"`, `"attributes"`, `"predefined"`. Browse mode при пустом query + конкретный scope. Graceful degradation при отсутствии таблиц. Возвращает text, source_type, object_name, path, path_kind, detail
 - `search_methods(query, limit=30)` — полнотекстовый поиск методов по подстроке имени во всей конфигурации. Требует SQLite-индекс (FTS5, ранжирование BM25). Возвращает имя, тип, is_export, путь к модулю, имя объекта
 - `search_objects(query, limit=50)` — поиск объектов 1С по бизнес-имени (русскому синониму) или техническому имени. Требует SQLite-индекс v7+ с таблицей `object_synonyms`. Кириллический case-insensitive поиск через UDF `py_lower()`. 4-уровневое ранжирование: exact name > prefix > synonym substring > category. Возвращает object_name, category, synonym (с категорийным префиксом), file
 - `search_regions(query, limit=30)` — поиск областей `#Область` по имени во всей конфигурации. Требует SQLite-индекс v8+ с таблицей `regions`. Возвращает имя области, путь к модулю, диапазон строк
@@ -95,6 +97,8 @@ Raw API фабрик `make_helpers()`/`make_bsl_helpers()` не затронут
 | `search_objects(query)`            | `SELECT` из `object_synonyms` с UDF `py_lower()`   | Недоступен                  |
 | `search_regions(query)`            | `SELECT` из `regions`                              | Недоступен                  |
 | `search_module_headers(query)`     | `SELECT` из `module_headers`                       | Недоступен                  |
+| `find_attributes(name)`           | `SELECT` из `object_attributes`                    | Live XML-парсинг            |
+| `find_predefined(name)`           | `SELECT` из `predefined_items`                     | Live XML-парсинг            |
 
 Подробности: [docs/INDEXING.md](INDEXING.md)
 
@@ -133,3 +137,14 @@ BSL-функционал добавлен поверх, не ломая исхо
 - **Структурированная стратегия** — ответ `rlm_start` содержит пошаговый WORKFLOW (DISCOVER → READ → TRACE → ANALYZE → EXTENSIONS) вместо монолитного текста. Секции с заголовками `== SECTION ==`, компактная таблица хелперов с возвратными типами, ссылки на `help('keyword')` для детальных рецептов
 - **SQLite Level-3 ускорение** — при наличии индекса `find_roles()`, `find_register_movements()`, `find_register_writers()` работают мгновенно из нормализованных таблиц `role_rights` и `register_movements`. Таблица `role_rights` строится параллельно с BSL regex-парсингом (CF: Rights.xml, EDT: .rights). Таблица `register_movements` извлекается in-band при обработке BSL-файлов документов (без дополнительного I/O). Без индекса — fallback на live-парсинг XML и grep
 - **Описания MCP-инструментов** — docstrings `rlm_start` и `rlm_execute` явно указывают, что `code` — это Python-код, что нужно использовать `print()`, содержат пример вызова
+
+## Индекс и слабые модели
+
+Без предварительно построенного индекса (`rlm-bsl-index index build <path>`) слабые модели (Kilo Auto, Qwen 3.6 Plus, Minimax и др.) не смогут качественно выполнить анализ:
+
+- `find_attributes(name=...)`, `find_predefined(name=...)`, `search()`, `search_methods()`, `search_objects()`, `search_regions()`, `search_module_headers()` — возвращают пустые результаты без индекса
+- `find_attributes(object_name=...)`, `find_predefined(object_name=...)` — работают через XML-fallback, но требуют многошаговой логики (find_module → category → XML-парсинг)
+
+Сильные модели (Claude Sonnet/Opus, GPT) способны самостоятельно выстроить цепочку fallback-вызовов. Слабые модели видят пустой результат и сдаются, не пытаясь использовать альтернативные хелперы.
+
+**Рекомендация:** всегда стройте индекс перед работой со слабыми моделями. Для сильных моделей индекс опционален, но значительно ускоряет анализ (1s vs 20-50s на старт сессии, мгновенные поиски vs таймауты на find_roles/find_functional_options).

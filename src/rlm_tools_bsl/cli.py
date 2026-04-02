@@ -67,13 +67,17 @@ def _cmd_build(args: argparse.Namespace) -> None:
 
     t0 = time.time()
     builder = IndexBuilder()
-    db_path = builder.build(
-        base_path,
-        build_calls=build_calls,
-        build_metadata=build_metadata,
-        build_fts=build_fts,
-        build_synonyms=build_synonyms,
-    )
+    try:
+        db_path = builder.build(
+            base_path,
+            build_calls=build_calls,
+            build_metadata=build_metadata,
+            build_fts=build_fts,
+            build_synonyms=build_synonyms,
+        )
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     elapsed = time.time() - t0
 
     # Read back stats
@@ -100,6 +104,10 @@ def _cmd_build(args: argparse.Namespace) -> None:
         print(f"  FuncOpts:   {stats.get('functional_options', 0)}")
     if stats.get("object_synonyms"):
         print(f"  Synonyms:   {stats['object_synonyms']}")
+    if stats.get("object_attributes"):
+        print(f"  Attributes: {stats['object_attributes']}")
+    if stats.get("predefined_items"):
+        print(f"  Predefined: {stats['predefined_items']}")
     if stats.get("file_paths"):
         print(f"  FilePaths:  {stats['file_paths']}")
     print(f"  DB size:  {_fmt_size(db_size)}")
@@ -120,7 +128,11 @@ def _cmd_update(args: argparse.Namespace) -> None:
 
     t0 = time.time()
     builder = IndexBuilder()
-    delta = builder.update(base_path)
+    try:
+        delta = builder.update(base_path)
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     elapsed = time.time() - t0
 
     # Read back stats
@@ -194,6 +206,12 @@ def _cmd_info(args: argparse.Namespace) -> None:
         print(f"  FuncOpts:   {stats.get('functional_options', 0)}")
     elif stats.get("has_metadata") is not None:
         print("  Metadata: not indexed")
+    if stats.get("object_synonyms"):
+        print(f"  Synonyms:   {stats['object_synonyms']}")
+    if stats.get("object_attributes"):
+        print(f"  Attributes: {stats['object_attributes']}")
+    if stats.get("predefined_items"):
+        print(f"  Predefined: {stats['predefined_items']}")
     if stats.get("file_paths"):
         print(f"  FilePaths:  {stats['file_paths']}")
     print(f"  FTS:      {'yes' if stats.get('has_fts') else 'no'}")

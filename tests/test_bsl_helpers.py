@@ -12,6 +12,7 @@ from rlm_tools_bsl.bsl_helpers import (
     parse_functional_option_xml,
     parse_rights_xml,
 )
+from rlm_tools_bsl.bsl_xml_parsers import normalize_type_string, parse_predefined_items
 
 
 BSL_CODE = """\
@@ -2043,3 +2044,499 @@ def test_find_xdto_packages_no_package_xdto():
         pkg = next(p for p in result if p["name"] == "TestPackage")
         assert pkg["namespace"] == "http://example.com/test"
         assert "types" not in pkg or pkg.get("types") == []
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Tests for v1.7.0: object_attributes, predefined_items, normalize_type_string
+# ──────────────────────────────────────────────────────────────────────────
+
+CF_DOC_WITH_TS_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses"
+    xmlns:v8="http://v8.1c.ru/8.1/data/core">
+  <Document>
+    <Properties>
+      <Name>ДокСТЧ</Name>
+      <Synonym><v8:item><v8:lang>ru</v8:lang><v8:content>Док с ТЧ</v8:content></v8:item></Synonym>
+    </Properties>
+    <ChildObjects>
+      <TabularSection>
+        <Properties>
+          <Name>Товары</Name>
+          <Synonym><v8:item><v8:lang>ru</v8:lang><v8:content>Товары</v8:content></v8:item></Synonym>
+        </Properties>
+        <ChildObjects>
+          <Attribute>
+            <Properties>
+              <Name>Номенклатура</Name>
+              <Synonym><v8:item><v8:lang>ru</v8:lang><v8:content>Номенклатура</v8:content></v8:item></Synonym>
+              <Type><v8:Type xmlns:d4p1="http://v8.1c.ru/8.1/data/enterprise/current-config">d4p1:CatalogRef.Номенклатура</v8:Type></Type>
+            </Properties>
+          </Attribute>
+          <Attribute>
+            <Properties>
+              <Name>Количество</Name>
+              <Synonym><v8:item><v8:lang>ru</v8:lang><v8:content>Количество</v8:content></v8:item></Synonym>
+              <Type><v8:Type>xs:decimal</v8:Type></Type>
+            </Properties>
+          </Attribute>
+        </ChildObjects>
+      </TabularSection>
+    </ChildObjects>
+  </Document>
+</MetaDataObject>
+"""
+
+
+class TestCfTabularSectionAttributes:
+    def test_ts_attributes_parsed(self):
+        result = parse_metadata_xml(CF_DOC_WITH_TS_XML)
+        assert "tabular_sections" in result
+        ts = result["tabular_sections"][0]
+        assert ts["name"] == "Товары"
+        assert len(ts["attributes"]) == 2
+        assert ts["attributes"][0]["name"] == "Номенклатура"
+        assert ts["attributes"][1]["name"] == "Количество"
+
+
+class TestNormalizeTypeString:
+    def test_single_xs_string(self):
+        assert normalize_type_string("xs:string") == '["String"]'
+
+    def test_single_xs_decimal(self):
+        assert normalize_type_string("xs:decimal") == '["Number"]'
+
+    def test_single_xs_boolean(self):
+        assert normalize_type_string("xs:boolean") == '["Boolean"]'
+
+    def test_single_xs_datetime(self):
+        assert normalize_type_string("xs:dateTime") == '["DateTime"]'
+
+    def test_cfg_catalog_ref(self):
+        assert normalize_type_string("cfg:CatalogRef.Организации") == '["CatalogRef.Организации"]'
+
+    def test_d4p1_catalog_ref(self):
+        assert normalize_type_string("d4p1:CatalogRef.Номенклатура") == '["CatalogRef.Номенклатура"]'
+
+    def test_edt_no_prefix(self):
+        assert normalize_type_string("CatalogRef.Номенклатура") == '["CatalogRef.Номенклатура"]'
+
+    def test_composite_types(self):
+        result = normalize_type_string("cfg:CatalogRef.X, cfg:CatalogRef.Y")
+        assert result == '["CatalogRef.X", "CatalogRef.Y"]'
+
+    def test_empty_string(self):
+        assert normalize_type_string("") == "[]"
+
+    def test_single_xs_base64binary(self):
+        assert normalize_type_string("xs:base64Binary") == '["ValueStorage"]'
+
+    def test_mixed_prefixes(self):
+        result = normalize_type_string("xs:string, cfg:CatalogRef.X, d4p1:DocumentRef.Y")
+        assert result == '["String", "CatalogRef.X", "DocumentRef.Y"]'
+
+
+PREDEFINED_CF_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<ChartOfCharacteristicTypes xmlns="http://v8.1c.ru/8.3/MDClasses"
+    xmlns:v8="http://v8.1c.ru/8.1/data/core">
+<PredefinedData>
+<Item id="aaa">
+    <Name>РеализуемыеАктивы</Name>
+    <Code>00055</Code>
+    <Description>Реализуемые активы</Description>
+    <Type>
+        <v8:Type xmlns:d4p1="http://v8.1c.ru/8.1/data/enterprise/current-config">d4p1:CatalogRef.Номенклатура</v8:Type>
+        <v8:Type xmlns:d4p1="http://v8.1c.ru/8.1/data/enterprise/current-config">d4p1:CatalogRef.Контрагенты</v8:Type>
+    </Type>
+    <IsFolder>false</IsFolder>
+</Item>
+<Item id="bbb">
+    <Name>ВидыДеятельности</Name>
+    <Code>00010</Code>
+    <Description>Виды деятельности</Description>
+    <Type>
+        <v8:Type xmlns:d4p1="http://v8.1c.ru/8.1/data/enterprise/current-config">d4p1:CatalogRef.ВидыДеятельности</v8:Type>
+    </Type>
+    <IsFolder>true</IsFolder>
+</Item>
+</PredefinedData>
+</ChartOfCharacteristicTypes>
+"""
+
+PREDEFINED_EDT_MDO = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<mdclass:ChartOfCharacteristicTypes xmlns:mdclass="http://g5.1c.ru/v8/dt/metadata/mdclass">
+  <name>ВидыСубконтоХозрасчетные</name>
+  <predefined>
+    <items id="aaa">
+      <name>РеализуемыеАктивы</name>
+      <description>Реализуемые активы</description>
+      <code>00055</code>
+      <type>
+        <types>CatalogRef.Номенклатура</types>
+        <types>CatalogRef.Контрагенты</types>
+      </type>
+    </items>
+    <items id="bbb">
+      <name>ВидыДеятельности</name>
+      <description>Виды деятельности</description>
+      <code>00010</code>
+      <type>
+        <types>CatalogRef.ВидыДеятельности</types>
+      </type>
+      <isFolder>true</isFolder>
+    </items>
+  </predefined>
+</mdclass:ChartOfCharacteristicTypes>
+"""
+
+
+class TestParsePredefinedItems:
+    def test_cf_format(self):
+        result = parse_predefined_items(PREDEFINED_CF_XML)
+        assert result is not None
+        assert len(result) == 2
+        r0 = result[0]
+        assert r0["name"] == "РеализуемыеАктивы"
+        assert r0["synonym"] == "Реализуемые активы"
+        assert r0["code"] == "00055"
+        assert "CatalogRef.Номенклатура" in r0["types"]
+        assert "CatalogRef.Контрагенты" in r0["types"]
+        assert r0["is_folder"] is False
+        r1 = result[1]
+        assert r1["name"] == "ВидыДеятельности"
+        assert r1["is_folder"] is True
+
+    def test_edt_format(self):
+        result = parse_predefined_items(PREDEFINED_EDT_MDO)
+        assert result is not None
+        assert len(result) == 2
+        r0 = result[0]
+        assert r0["name"] == "РеализуемыеАктивы"
+        assert r0["synonym"] == "Реализуемые активы"
+        assert r0["code"] == "00055"
+        assert "CatalogRef.Номенклатура" in r0["types"]
+        assert "CatalogRef.Контрагенты" in r0["types"]
+        assert r0["is_folder"] is False
+
+    def test_empty_xml(self):
+        result = parse_predefined_items("<root/>")
+        assert result is None or result == []
+
+    def test_invalid_xml(self):
+        result = parse_predefined_items("not xml")
+        assert result is None
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Tests for IndexReader, helpers, and search integration (v1.7.0)
+# ──────────────────────────────────────────────────────────────────────────
+
+ATTR_DOC_CF_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses"
+    xmlns:v8="http://v8.1c.ru/8.1/data/core">
+  <Document>
+    <Properties>
+      <Name>ТестДок</Name>
+      <Synonym><v8:item><v8:lang>ru</v8:lang><v8:content>Тест документ</v8:content></v8:item></Synonym>
+    </Properties>
+    <ChildObjects>
+      <Attribute>
+        <Properties>
+          <Name>Организация</Name>
+          <Synonym><v8:item><v8:lang>ru</v8:lang><v8:content>Организация</v8:content></v8:item></Synonym>
+          <Type><v8:Type xmlns:d4p1="http://v8.1c.ru/8.1/data/enterprise/current-config">d4p1:CatalogRef.Организации</v8:Type></Type>
+        </Properties>
+      </Attribute>
+      <Attribute>
+        <Properties>
+          <Name>Сумма</Name>
+          <Synonym><v8:item><v8:lang>ru</v8:lang><v8:content>Сумма</v8:content></v8:item></Synonym>
+          <Type><v8:Type>xs:decimal</v8:Type></Type>
+        </Properties>
+      </Attribute>
+    </ChildObjects>
+  </Document>
+</MetaDataObject>
+"""
+
+
+def _make_indexed_fixture(tmpdir):
+    """Create fixture with indexed attributes + predefined items."""
+    from rlm_tools_bsl.bsl_index import IndexBuilder, IndexReader
+
+    # BSL module (required for index build)
+    mod_dir = os.path.join(tmpdir, "CommonModules", "МойМодуль", "Ext")
+    os.makedirs(mod_dir)
+    with open(os.path.join(mod_dir, "Module.bsl"), "w", encoding="utf-8") as f:
+        f.write(BSL_CODE)
+
+    # Document with attributes
+    doc_dir = os.path.join(tmpdir, "Documents", "ТестДок", "Ext")
+    os.makedirs(doc_dir)
+    with open(os.path.join(doc_dir, "Document.xml"), "w", encoding="utf-8") as f:
+        f.write(ATTR_DOC_CF_XML)
+    with open(os.path.join(doc_dir, "ObjectModule.bsl"), "w", encoding="utf-8") as f:
+        f.write("// пусто")
+
+    # Predefined items
+    pvh_dir = os.path.join(tmpdir, "ChartsOfCharacteristicTypes", "ВидыСубконто", "Ext")
+    os.makedirs(pvh_dir)
+    with open(os.path.join(pvh_dir, "Predefined.xml"), "w", encoding="utf-8") as f:
+        f.write(PREDEFINED_CF_XML)
+    # Need a metadata XML too for attribute scanning
+    with open(os.path.join(pvh_dir, "ChartOfCharacteristicTypes.xml"), "w", encoding="utf-8") as f:
+        f.write("""\
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses"
+    xmlns:v8="http://v8.1c.ru/8.1/data/core">
+  <ChartOfCharacteristicTypes>
+    <Properties>
+      <Name>ВидыСубконто</Name>
+      <Synonym><v8:item><v8:lang>ru</v8:lang><v8:content>Виды субконто</v8:content></v8:item></Synonym>
+    </Properties>
+  </ChartOfCharacteristicTypes>
+</MetaDataObject>
+""")
+
+    with open(os.path.join(tmpdir, "Configuration.xml"), "w") as f:
+        f.write("<Configuration/>")
+
+    # Build index
+    builder = IndexBuilder()
+    db_path = builder.build(tmpdir, build_calls=False, build_metadata=True)
+
+    reader = IndexReader(str(db_path))
+    helpers, resolve_safe = make_helpers(tmpdir)
+    format_info = detect_format(tmpdir)
+    bsl = make_bsl_helpers(
+        base_path=tmpdir,
+        resolve_safe=resolve_safe,
+        read_file_fn=helpers["read_file"],
+        grep_fn=helpers["grep"],
+        glob_files_fn=helpers["glob_files"],
+        format_info=format_info,
+        idx_reader=reader,
+    )
+    return bsl, reader
+
+
+class TestIndexReaderObjectAttributes:
+    def test_get_object_attributes_by_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = reader.get_object_attributes(attr_name="Организация")
+            assert results is not None
+            assert len(results) >= 1
+            assert any(r["attr_name"] == "Организация" for r in results)
+            assert all(isinstance(r["attr_type"], list) for r in results)
+            reader.close()
+
+    def test_get_object_attributes_by_object(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = reader.get_object_attributes(object_name="ТестДок")
+            assert results is not None
+            assert len(results) == 2  # Организация + Сумма
+            reader.close()
+
+    def test_get_object_attributes_by_kind(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = reader.get_object_attributes(kind="attribute")
+            assert results is not None
+            assert len(results) >= 2
+            assert all(r["attr_kind"] == "attribute" for r in results)
+            reader.close()
+
+    def test_get_object_attributes_kind_case_insensitive(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = reader.get_object_attributes(kind="Attribute")
+            assert results is not None
+            assert len(results) >= 2
+            reader.close()
+
+    def test_get_object_attributes_not_found(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = reader.get_object_attributes(attr_name="НесуществующийРеквизит")
+            assert results is not None
+            assert results == []
+            reader.close()
+
+
+class TestIndexReaderPredefinedItems:
+    def test_get_predefined_items_by_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = reader.get_predefined_items(item_name="РеализуемыеАктивы")
+            assert results is not None
+            assert len(results) >= 1
+            r0 = results[0]
+            assert r0["item_name"] == "РеализуемыеАктивы"
+            assert isinstance(r0["types"], list)
+            assert "CatalogRef.Номенклатура" in r0["types"]
+            reader.close()
+
+    def test_get_predefined_items_by_object(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = reader.get_predefined_items(object_name="ВидыСубконто")
+            assert results is not None
+            assert len(results) == 2  # РеализуемыеАктивы + ВидыДеятельности
+            reader.close()
+
+    def test_get_predefined_items_not_found(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = reader.get_predefined_items(item_name="НесуществующийЭлемент")
+            assert results is not None
+            assert results == []
+            reader.close()
+
+
+class TestFindAttributesHelper:
+    def test_find_attributes_by_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = bsl["find_attributes"](name="Организация")
+            assert isinstance(results, list)
+            assert len(results) >= 1
+            assert any(r["attr_name"] == "Организация" for r in results)
+            reader.close()
+
+    def test_find_attributes_by_object(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = bsl["find_attributes"](object_name="ТестДок")
+            assert isinstance(results, list)
+            assert len(results) == 2
+            reader.close()
+
+    def test_find_attributes_not_found(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = bsl["find_attributes"](name="НесуществующийРеквизит")
+            assert results == []
+            reader.close()
+
+
+class TestFindPredefinedHelper:
+    def test_find_predefined_by_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = bsl["find_predefined"](name="РеализуемыеАктивы")
+            assert isinstance(results, list)
+            assert len(results) >= 1
+            assert results[0]["item_name"] == "РеализуемыеАктивы"
+            reader.close()
+
+    def test_find_predefined_not_found(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = bsl["find_predefined"](name="НесуществующийЭлемент")
+            assert results == []
+            reader.close()
+
+
+class TestSearchNewScopes:
+    def test_search_scope_attributes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = bsl["search"]("Организация", scope="attributes")
+            assert isinstance(results, list)
+            assert len(results) >= 1
+            assert all(r["source_type"] == "attribute" for r in results)
+            reader.close()
+
+    def test_search_scope_predefined(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = bsl["search"]("Реализуемые", scope="predefined")
+            assert isinstance(results, list)
+            assert len(results) >= 1
+            assert all(r["source_type"] == "predefined" for r in results)
+            reader.close()
+
+    def test_search_all_includes_new_types(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = bsl["search"]("Организация", scope="all")
+            source_types = {r["source_type"] for r in results}
+            assert "attribute" in source_types
+            reader.close()
+
+
+class TestGetIndexInfoNewFields:
+    def test_has_new_capability_flags(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            info = bsl["get_index_info"]()
+            assert info["status"] == "ok"
+            assert info["has_object_attributes"] is True
+            assert info["has_predefined_items"] is True
+            assert info["object_attributes_count"] >= 2
+            assert info["predefined_items_count"] >= 2
+            reader.close()
+
+
+class TestSearchSynonymPath:
+    def test_search_predefined_by_synonym(self):
+        """search(scope='predefined') finds items by synonym (Реализуемые активы)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            results = bsl["search"]("Реализуемые активы", scope="predefined")
+            assert isinstance(results, list)
+            assert len(results) >= 1
+            assert any("Реализуемые" in r["text"] for r in results)
+            reader.close()
+
+    def test_search_attribute_by_synonym(self):
+        """search(scope='attributes') finds by synonym when attr_name != attr_synonym."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bsl, reader = _make_indexed_fixture(tmpdir)
+            # Организация has same name and synonym — search by synonym
+            results = bsl["search"]("Организация", scope="attributes")
+            assert isinstance(results, list)
+            assert len(results) >= 1
+            reader.close()
+
+
+class TestFallbackContract:
+    def test_find_attributes_fallback_normalizes_types(self):
+        """Fallback path returns normalized types matching index contract."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create fixture WITHOUT index — only XML files
+            doc_dir = os.path.join(tmpdir, "Documents", "ТестДок", "Ext")
+            os.makedirs(doc_dir)
+            with open(os.path.join(doc_dir, "Document.xml"), "w", encoding="utf-8") as f:
+                f.write(ATTR_DOC_CF_XML)
+
+            with open(os.path.join(tmpdir, "Configuration.xml"), "w") as f:
+                f.write("<Configuration/>")
+
+            helpers, resolve_safe = make_helpers(tmpdir)
+            format_info = detect_format(tmpdir)
+            bsl = make_bsl_helpers(
+                base_path=tmpdir,
+                resolve_safe=resolve_safe,
+                read_file_fn=helpers["read_file"],
+                grep_fn=helpers["grep"],
+                glob_files_fn=helpers["glob_files"],
+                format_info=format_info,
+                # No idx_reader — force fallback path
+            )
+            results = bsl["find_attributes"](object_name="Documents/ТестДок")
+            assert len(results) == 2
+            # Types must be normalized lists, not raw XML strings
+            org = next(r for r in results if r["attr_name"] == "Организация")
+            assert isinstance(org["attr_type"], list)
+            assert "CatalogRef.Организации" in org["attr_type"]
+            # Category must be filled from path
+            assert org["category"] == "Documents"
+            # Сумма type must be normalized
+            summ = next(r for r in results if r["attr_name"] == "Сумма")
+            assert "Number" in summ["attr_type"]

@@ -24,7 +24,76 @@ from rlm_tools_bsl.format_detector import BslFileInfo, parse_bsl_path
 
 logger = logging.getLogger(__name__)
 
-BUILDER_VERSION = 10
+BUILDER_VERSION = 11
+
+
+_active_locks: dict[str, "_BuildLock"] = {}
+
+
+class _BuildLock:
+    """Exclusive file lock for index build/update.
+
+    Uses OS-level file locking (fcntl on Unix, msvcrt on Windows)
+    which is automatically released when the process dies.
+    Reentrant within the same process (sequential build+update).
+    """
+
+    def __init__(self, db_path: Path):
+        self.lock_path = db_path.with_suffix(".lock")
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd: int | None = None
+        self._key = str(self.lock_path)
+        self._reentrant = False
+
+    def acquire(self) -> None:
+        """Acquire exclusive lock. Raises RuntimeError if already held by another process."""
+        # Reentrant: same process already holds this lock (e.g. build then update)
+        if self._key in _active_locks:
+            self._reentrant = True
+            return
+
+        self._fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(self._fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, IOError):
+            os.close(self._fd)
+            self._fd = None
+            raise RuntimeError(
+                f"Index build already in progress (lock: {self.lock_path}). "
+                "Wait for it to finish or remove the lock file manually."
+            )
+        _active_locks[self._key] = self
+
+    def release(self) -> None:
+        """Release the lock."""
+        if self._reentrant:
+            return
+        if self._fd is not None:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    try:
+                        msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+                    except OSError:
+                        pass
+                else:
+                    import fcntl
+
+                    fcntl.flock(self._fd, fcntl.LOCK_UN)
+            finally:
+                os.close(self._fd)
+                self._fd = None
+            _active_locks.pop(self._key, None)
+            self.lock_path.unlink(missing_ok=True)
+
 
 # ---------------------------------------------------------------------------
 # Regex patterns copied from bsl_helpers._parse_procedures / _strip_code_line
@@ -327,6 +396,38 @@ CREATE INDEX IF NOT EXISTS idx_eo_object ON extension_overrides(object_name COLL
 CREATE INDEX IF NOT EXISTS idx_eo_method ON extension_overrides(target_method COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_eo_source ON extension_overrides(source_module_id);
 CREATE INDEX IF NOT EXISTS idx_eo_ext ON extension_overrides(extension_name COLLATE NOCASE);
+
+-- Level-11: object attributes (реквизиты, измерения, ресурсы с типами)
+CREATE TABLE IF NOT EXISTS object_attributes (
+    id INTEGER PRIMARY KEY,
+    object_name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    attr_name TEXT NOT NULL,
+    attr_synonym TEXT,
+    attr_type TEXT,
+    attr_kind TEXT NOT NULL,
+    ts_name TEXT,
+    source_file TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oa_object ON object_attributes(object_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_oa_attr ON object_attributes(attr_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_oa_category ON object_attributes(category);
+
+-- Level-11: predefined items (предопределённые элементы ПВХ, справочников, планов счетов)
+CREATE TABLE IF NOT EXISTS predefined_items (
+    id INTEGER PRIMARY KEY,
+    object_name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    item_name TEXT NOT NULL,
+    item_synonym TEXT,
+    item_code TEXT,
+    types_json TEXT,
+    is_folder INTEGER DEFAULT 0,
+    source_file TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pi_object ON predefined_items(object_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_pi_item ON predefined_items(item_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_pi_synonym ON predefined_items(item_synonym COLLATE NOCASE);
 """
 
 
@@ -848,11 +949,13 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
     Each value is a list of tuples ready for INSERT.
     """
     from rlm_tools_bsl.bsl_xml_parsers import (
+        normalize_type_string,
         parse_enum_xml,
         parse_event_subscription_xml,
         parse_functional_option_xml,
         parse_http_service_xml,
         parse_metadata_xml,
+        parse_predefined_items,
         parse_scheduled_job_xml,
         parse_web_service_xml,
         parse_xdto_package_xml,
@@ -869,6 +972,8 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         "http_services": [],
         "web_services": [],
         "xdto_packages": [],
+        "object_attributes": [],
+        "predefined_items": [],
     }
 
     def _read(fp: Path) -> str | None:
@@ -1064,6 +1169,187 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
             )
         )
 
+    # --- Level-11: Object attributes (реквизиты, измерения, ресурсы, колонки ТЧ) ---
+    _ATTR_CATEGORIES = [
+        "Documents",
+        "Catalogs",
+        "InformationRegisters",
+        "AccumulationRegisters",
+        "AccountingRegisters",
+        "ChartsOfCharacteristicTypes",
+    ]
+
+    # Best-effort CF XML suffix hints (first attempt, NOT authoritative)
+    _CF_XML_HINTS: dict[str, str] = {
+        "Documents": "Document",
+        "Catalogs": "Catalog",
+        "InformationRegisters": "RecordSet",
+        "AccumulationRegisters": "RecordSet",
+        "AccountingRegisters": "RecordSet",
+        "ChartsOfCharacteristicTypes": "ChartOfCharacteristicTypes",
+    }
+
+    def _find_metadata_xml(obj_dir: Path, category: str) -> Path | None:
+        """Find metadata XML using robust fallback strategy."""
+        obj_name = obj_dir.name
+        # EDT: Name/Name.mdo
+        mdo = obj_dir / f"{obj_name}.mdo"
+        if mdo.is_file():
+            return mdo
+        # CF variant 1: Category/Name.xml (sibling file next to folder)
+        sibling_xml = obj_dir.parent / f"{obj_name}.xml"
+        if sibling_xml.is_file():
+            return sibling_xml
+        # CF variant 2: Name/Ext/{Hint}.xml
+        hint = _CF_XML_HINTS.get(category)
+        if hint:
+            cf = obj_dir / "Ext" / f"{hint}.xml"
+            if cf.is_file():
+                return cf
+        # CF fallback: first XML in Ext/
+        ext_dir = obj_dir / "Ext"
+        if ext_dir.is_dir():
+            for fp in sorted(ext_dir.iterdir()):
+                if fp.suffix.lower() == ".xml" and fp.is_file():
+                    return fp
+        return None
+
+    for category in _ATTR_CATEGORIES:
+        cat_dir = base / category
+        if not cat_dir.is_dir():
+            continue
+        for obj_dir in sorted(cat_dir.iterdir()):
+            if not obj_dir.is_dir():
+                continue
+            obj_name = obj_dir.name
+
+            xml_path = _find_metadata_xml(obj_dir, category)
+            if xml_path is None:
+                continue
+
+            content = _read(xml_path)
+            if not content:
+                continue
+            try:
+                parsed = parse_metadata_xml(content)
+            except Exception:
+                continue
+            if not parsed:
+                continue
+
+            rel = xml_path.relative_to(base).as_posix()
+
+            for attr in parsed.get("attributes", []):
+                result["object_attributes"].append(
+                    (
+                        obj_name,
+                        category,
+                        attr.get("name", ""),
+                        attr.get("synonym", ""),
+                        normalize_type_string(attr.get("type", "")),
+                        "attribute",
+                        None,
+                        rel,
+                    )
+                )
+
+            for dim in parsed.get("dimensions", []):
+                result["object_attributes"].append(
+                    (
+                        obj_name,
+                        category,
+                        dim.get("name", ""),
+                        dim.get("synonym", ""),
+                        normalize_type_string(dim.get("type", "")),
+                        "dimension",
+                        None,
+                        rel,
+                    )
+                )
+
+            for res in parsed.get("resources", []):
+                result["object_attributes"].append(
+                    (
+                        obj_name,
+                        category,
+                        res.get("name", ""),
+                        res.get("synonym", ""),
+                        normalize_type_string(res.get("type", "")),
+                        "resource",
+                        None,
+                        rel,
+                    )
+                )
+
+            for ts in parsed.get("tabular_sections", []):
+                ts_name = ts.get("name", "")
+                for ts_attr in ts.get("attributes", []):
+                    result["object_attributes"].append(
+                        (
+                            obj_name,
+                            category,
+                            ts_attr.get("name", ""),
+                            ts_attr.get("synonym", ""),
+                            normalize_type_string(ts_attr.get("type", "")),
+                            "ts_attribute",
+                            ts_name,
+                            rel,
+                        )
+                    )
+
+    # --- Level-11: Predefined items (ПВХ, справочники, планы счетов) ---
+    _PREDEFINED_CATEGORIES = [
+        "ChartsOfCharacteristicTypes",
+        "Catalogs",
+        "ChartsOfAccounts",
+    ]
+    for category in _PREDEFINED_CATEGORIES:
+        cat_dir = base / category
+        if not cat_dir.is_dir():
+            continue
+        for obj_dir in sorted(cat_dir.iterdir()):
+            if not obj_dir.is_dir():
+                continue
+            obj_name = obj_dir.name
+
+            # CF: Ext/Predefined.xml
+            predef_path = obj_dir / "Ext" / "Predefined.xml"
+            predef_items_list = None
+            rel = ""
+            if predef_path.is_file():
+                content = _read(predef_path)
+                if content:
+                    predef_items_list = parse_predefined_items(content)
+                rel = predef_path.relative_to(base).as_posix()
+            else:
+                # EDT: predefined section inside .mdo
+                mdo_path = obj_dir / f"{obj_name}.mdo"
+                if mdo_path.is_file():
+                    content = _read(mdo_path)
+                    if content:
+                        predef_items_list = parse_predefined_items(content)
+                    rel = mdo_path.relative_to(base).as_posix()
+                else:
+                    continue
+
+            if not predef_items_list:
+                continue
+
+            for item in predef_items_list:
+                types_json = json.dumps(item.get("types", []), ensure_ascii=False)
+                result["predefined_items"].append(
+                    (
+                        obj_name,
+                        category,
+                        item.get("name", ""),
+                        item.get("synonym", ""),
+                        item.get("code", ""),
+                        types_json,
+                        1 if item.get("is_folder") else 0,
+                        rel,
+                    )
+                )
+
     return result
 
 
@@ -1138,6 +1424,32 @@ def _insert_metadata_tables(conn: sqlite3.Connection, tables: dict[str, list[tup
         conn.executemany(
             "INSERT INTO xdto_packages (name, namespace, types_json, file) VALUES (?, ?, ?, ?)",
             tables["xdto_packages"],
+        )
+
+    # Object attributes
+    try:
+        conn.execute("DELETE FROM object_attributes")
+    except sqlite3.OperationalError:
+        pass
+    if tables.get("object_attributes"):
+        conn.executemany(
+            "INSERT INTO object_attributes "
+            "(object_name, category, attr_name, attr_synonym, attr_type, attr_kind, ts_name, source_file) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            tables["object_attributes"],
+        )
+
+    # Predefined items
+    try:
+        conn.execute("DELETE FROM predefined_items")
+    except sqlite3.OperationalError:
+        pass
+    if tables.get("predefined_items"):
+        conn.executemany(
+            "INSERT INTO predefined_items "
+            "(object_name, category, item_name, item_synonym, item_code, types_json, is_folder, source_file) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            tables["predefined_items"],
         )
 
 
@@ -1971,6 +2283,23 @@ class IndexBuilder:
         db_path = get_index_db_path(base_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
+        lock = _BuildLock(db_path)
+        lock.acquire()
+        try:
+            return self._build_locked(base_path, db_path, build_calls, build_metadata, build_fts, build_synonyms)
+        finally:
+            lock.release()
+
+    def _build_locked(
+        self,
+        base_path: str,
+        db_path: Path,
+        build_calls: bool,
+        build_metadata: bool,
+        build_fts: bool,
+        build_synonyms: bool,
+    ) -> Path:
+        """Internal build with lock already acquired."""
         # Remove old DB if it exists
         if db_path.exists():
             db_path.unlink()
@@ -2153,6 +2482,18 @@ class IndexBuilder:
             ("form_elements_count", str(len(fe_rows))),
         )
 
+        # Level-11: object attributes and predefined items meta
+        oa_count = len(md_tables.get("object_attributes", [])) if build_metadata else 0
+        pi_count = len(md_tables.get("predefined_items", [])) if build_metadata else 0
+        conn.execute(
+            "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+            ("object_attributes_count", str(oa_count)),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+            ("predefined_items_count", str(pi_count)),
+        )
+
         # Detect custom prefixes from object names in index
         detected_prefixes = _detect_prefixes(conn)
 
@@ -2198,6 +2539,15 @@ class IndexBuilder:
         if not db_path.exists():
             raise FileNotFoundError(f"Index not found: {db_path}")
 
+        lock = _BuildLock(db_path)
+        lock.acquire()
+        try:
+            return self._update_locked(base_path, db_path)
+        finally:
+            lock.release()
+
+    def _update_locked(self, base_path: str, db_path: Path) -> dict:
+        """Internal update with lock already acquired."""
         t0 = time.time()
         base = Path(base_path)
 
@@ -2455,8 +2805,38 @@ class IndexBuilder:
                 "CREATE INDEX IF NOT EXISTS idx_xp_name ON xdto_packages(name COLLATE NOCASE);\n"
                 "CREATE INDEX IF NOT EXISTS idx_xp_ns ON xdto_packages(namespace);\n"
             )
+            # Level-11: object_attributes and predefined_items (schema upgrade)
+            conn.executescript(
+                "CREATE TABLE IF NOT EXISTS object_attributes ("
+                "id INTEGER PRIMARY KEY, "
+                "object_name TEXT NOT NULL, category TEXT NOT NULL, "
+                "attr_name TEXT NOT NULL, attr_synonym TEXT, "
+                "attr_type TEXT, attr_kind TEXT NOT NULL, "
+                "ts_name TEXT, source_file TEXT NOT NULL);\n"
+                "CREATE INDEX IF NOT EXISTS idx_oa_object ON object_attributes(object_name COLLATE NOCASE);\n"
+                "CREATE INDEX IF NOT EXISTS idx_oa_attr ON object_attributes(attr_name COLLATE NOCASE);\n"
+                "CREATE INDEX IF NOT EXISTS idx_oa_category ON object_attributes(category);\n"
+                "CREATE TABLE IF NOT EXISTS predefined_items ("
+                "id INTEGER PRIMARY KEY, "
+                "object_name TEXT NOT NULL, category TEXT NOT NULL, "
+                "item_name TEXT NOT NULL, item_synonym TEXT, "
+                "item_code TEXT, types_json TEXT, "
+                "is_folder INTEGER DEFAULT 0, source_file TEXT NOT NULL);\n"
+                "CREATE INDEX IF NOT EXISTS idx_pi_object ON predefined_items(object_name COLLATE NOCASE);\n"
+                "CREATE INDEX IF NOT EXISTS idx_pi_item ON predefined_items(item_name COLLATE NOCASE);\n"
+                "CREATE INDEX IF NOT EXISTS idx_pi_synonym ON predefined_items(item_synonym COLLATE NOCASE);\n"
+            )
             md_tables = _collect_metadata_tables(base_path)
             _insert_metadata_tables(conn, md_tables)
+            # Update meta counts for new tables
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                ("object_attributes_count", str(len(md_tables.get("object_attributes", [])))),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                ("predefined_items_count", str(len(md_tables.get("predefined_items", [])))),
+            )
 
         # Level-6: object synonyms (schema upgrade v6→v7, full refresh)
         if has_synonyms:
@@ -3537,6 +3917,14 @@ class IndexReader:
             except sqlite3.Error:
                 stats["form_elements"] = 0
 
+            # Level-11: object attributes and predefined items
+            for table in ("object_attributes", "predefined_items"):
+                try:
+                    row = self._conn.execute(f"SELECT COUNT(*) AS cnt FROM {table}").fetchone()  # noqa: S608
+                    stats[table] = row["cnt"] if row else 0
+                except sqlite3.Error:
+                    stats[table] = 0
+
             return stats
 
     @property
@@ -4147,6 +4535,118 @@ class IndexReader:
                 return [dict(r) for r in rows]
             except sqlite3.OperationalError:
                 return None
+
+    def get_object_attributes(
+        self,
+        attr_name: str = "",
+        object_name: str = "",
+        category: str = "",
+        kind: str = "",
+        limit: int = 500,
+    ) -> list[dict] | None:
+        """Search indexed object attributes by name, object, category, or kind.
+
+        Returns list of dicts or None if table missing (fallback allowed).
+        """
+        with self._lock:
+            try:
+                conditions: list[str] = []
+                params: list[str | int] = []
+                if attr_name:
+                    conditions.append(
+                        "(py_lower(attr_name) LIKE '%' || py_lower(?) || '%'"
+                        " OR py_lower(attr_synonym) LIKE '%' || py_lower(?) || '%')"
+                    )
+                    params.extend([attr_name, attr_name])
+                if object_name:
+                    conditions.append("py_lower(object_name) LIKE '%' || py_lower(?) || '%'")
+                    params.append(object_name)
+                if category:
+                    conditions.append("category = ?")
+                    params.append(category)
+                if kind:
+                    conditions.append("attr_kind = ?")
+                    params.append(kind.lower())
+
+                where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+                sql = f"SELECT * FROM object_attributes{where} LIMIT ?"  # noqa: S608
+                params.append(limit)
+                rows = self._conn.execute(sql, params).fetchall()
+            except sqlite3.OperationalError:
+                return None
+
+            results = []
+            for r in rows:
+                attr_type: list[str] = []
+                try:
+                    attr_type = json.loads(r["attr_type"]) if r["attr_type"] else []
+                except (ValueError, TypeError):
+                    pass
+                results.append(
+                    {
+                        "object_name": r["object_name"],
+                        "category": r["category"],
+                        "attr_name": r["attr_name"],
+                        "attr_synonym": r["attr_synonym"] or "",
+                        "attr_type": attr_type,
+                        "attr_kind": r["attr_kind"],
+                        "ts_name": r["ts_name"],
+                        "source_file": r["source_file"],
+                    }
+                )
+            return results
+
+    def get_predefined_items(
+        self,
+        item_name: str = "",
+        object_name: str = "",
+        limit: int = 500,
+    ) -> list[dict] | None:
+        """Search indexed predefined items by name or parent object.
+
+        Returns list of dicts or None if table missing (fallback allowed).
+        """
+        with self._lock:
+            try:
+                conditions: list[str] = []
+                params: list[str | int] = []
+                if item_name:
+                    conditions.append(
+                        "(py_lower(item_name) LIKE '%' || py_lower(?) || '%'"
+                        " OR py_lower(item_synonym) LIKE '%' || py_lower(?) || '%')"
+                    )
+                    params.extend([item_name, item_name])
+                if object_name:
+                    conditions.append("py_lower(object_name) LIKE '%' || py_lower(?) || '%'")
+                    params.append(object_name)
+
+                where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+                sql = f"SELECT * FROM predefined_items{where} LIMIT ?"  # noqa: S608
+                params.append(limit)
+                rows = self._conn.execute(sql, params).fetchall()
+            except sqlite3.OperationalError:
+                return None
+
+            results = []
+            for r in rows:
+                types: list[str] = []
+                try:
+                    types = json.loads(r["types_json"]) if r["types_json"] else []
+                except (ValueError, TypeError):
+                    pass
+                results.append(
+                    {
+                        "object_name": r["object_name"],
+                        "category": r["category"],
+                        "item_name": r["item_name"],
+                        "item_synonym": r["item_synonym"] or "",
+                        "item_code": r["item_code"] or "",
+                        "types": types,
+                        "is_folder": bool(r["is_folder"]),
+                        "source_file": r["source_file"],
+                    }
+                )
+            return results
 
     def close(self) -> None:
         """Close the database connection."""

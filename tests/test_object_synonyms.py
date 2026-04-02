@@ -340,7 +340,7 @@ class TestBuildSynonyms:
         conn = sqlite3.connect(str(db_path))
         row = conn.execute("SELECT value FROM index_meta WHERE key='builder_version'").fetchone()
         conn.close()
-        assert row[0] == "10"
+        assert row[0] == "11"
 
 
 # ---------------------------------------------------------------------------
@@ -515,7 +515,7 @@ class TestHelpers:
         info = bsl["get_index_info"]()
         reader.close()
         assert info["status"] == "ok"
-        assert info["builder_version"] == 10
+        assert info["builder_version"] == 11
         assert info["has_synonyms"] is True
 
     def test_get_index_info_no_index(self):
@@ -686,7 +686,7 @@ class TestIncrementalUpdate:
         conn = sqlite3.connect(str(db_path))
         ver = conn.execute("SELECT value FROM index_meta WHERE key='builder_version'").fetchone()[0]
         conn.close()
-        assert ver == "10"
+        assert ver == "11"
 
 
 # ---------------------------------------------------------------------------
@@ -721,7 +721,7 @@ class TestV7toV8Migration:
 
         conn = sqlite3.connect(str(db_path))
         ver = conn.execute("SELECT value FROM index_meta WHERE key='builder_version'").fetchone()[0]
-        assert ver == "10"
+        assert ver == "11"
         # regions and module_headers tables must exist (no OperationalError)
         regions_count = conn.execute("SELECT COUNT(*) FROM regions").fetchone()[0]
         headers_count = conn.execute("SELECT COUNT(*) FROM module_headers").fetchone()[0]
@@ -830,7 +830,11 @@ class TestRecipesSearchObjects:
     def test_all_recipes_start_with_search_objects(self):
         from rlm_tools_bsl.bsl_knowledge import _BUSINESS_RECIPES
 
+        # Some recipes use specialized helpers instead of search_objects
+        _NO_SEARCH_OBJECTS = {"тип реквизита"}
         for domain, recipe in _BUSINESS_RECIPES.items():
+            if domain in _NO_SEARCH_OBJECTS:
+                continue
             for level in ("compact", "full"):
                 steps = recipe.get(level, [])
                 assert any("search_objects" in s for s in steps), f"Recipe '{domain}' {level} missing search_objects"

@@ -1957,6 +1957,205 @@ def make_bsl_helpers(
 
         return {"error": f"Перечисление '{enum_name}' не найдено"}
 
+    def find_attributes(
+        name: str = "", object_name: str = "", category: str = "", kind: str = "", limit: int = 500
+    ) -> list[dict]:
+        """Find object attributes/dimensions/resources by name, object, category, or kind."""
+        if kind:
+            kind = kind.lower()
+        if object_name:
+            object_name = _strip_meta_prefix(object_name)
+
+        has_path = object_name and "/" in object_name
+
+        # Fast path: index (None = table missing, [] = authoritative for name-only)
+        if idx_reader is not None:
+            results = idx_reader.get_object_attributes(
+                attr_name=name,
+                object_name=object_name,
+                category=category,
+                kind=kind,
+                limit=limit,
+            )
+            if results is not None:
+                # [] is authoritative for name-only; for Category/Name allow live fallback
+                if results or not has_path:
+                    return results
+
+        # Auto-resolve category via find_module (same pattern as analyze_object)
+        if object_name and not has_path:
+            modules = find_module(object_name)
+            exact = [m for m in modules if (m.get("object_name") or "").lower() == object_name.lower()]
+            if exact:
+                cat = exact[0].get("category", "")
+                if cat:
+                    object_name = f"{cat}/{object_name}"
+                    has_path = True
+
+        # Fallback: live XML parse via _resolve_object_xml (same as parse_object_xml)
+        if has_path:
+            from rlm_tools_bsl.bsl_xml_parsers import normalize_type_string as _nts
+
+            try:
+                resolved = _resolve_object_xml(object_name)
+                content = read_file_fn(resolved)
+                parsed = parse_metadata_xml(content)
+            except Exception:
+                return []
+            if not parsed:
+                return []
+
+            def _make_type(raw: str) -> list[str]:
+                import json as _json
+
+                return _json.loads(_nts(raw))
+
+            results = []
+            obj_short = object_name.split("/")[-1]
+            cat = object_name.split("/")[0]
+
+            for attr in parsed.get("attributes", []):
+                if name and name.lower() not in attr.get("name", "").lower():
+                    continue
+                if kind and kind != "attribute":
+                    continue
+                results.append(
+                    {
+                        "object_name": obj_short,
+                        "category": cat,
+                        "attr_name": attr.get("name", ""),
+                        "attr_synonym": attr.get("synonym", ""),
+                        "attr_type": _make_type(attr.get("type", "")),
+                        "attr_kind": "attribute",
+                        "ts_name": None,
+                    }
+                )
+            for dim in parsed.get("dimensions", []):
+                if name and name.lower() not in dim.get("name", "").lower():
+                    continue
+                if kind and kind != "dimension":
+                    continue
+                results.append(
+                    {
+                        "object_name": obj_short,
+                        "category": cat,
+                        "attr_name": dim.get("name", ""),
+                        "attr_synonym": dim.get("synonym", ""),
+                        "attr_type": _make_type(dim.get("type", "")),
+                        "attr_kind": "dimension",
+                        "ts_name": None,
+                    }
+                )
+            for res in parsed.get("resources", []):
+                if name and name.lower() not in res.get("name", "").lower():
+                    continue
+                if kind and kind != "resource":
+                    continue
+                results.append(
+                    {
+                        "object_name": obj_short,
+                        "category": cat,
+                        "attr_name": res.get("name", ""),
+                        "attr_synonym": res.get("synonym", ""),
+                        "attr_type": _make_type(res.get("type", "")),
+                        "attr_kind": "resource",
+                        "ts_name": None,
+                    }
+                )
+            for ts in parsed.get("tabular_sections", []):
+                for ta in ts.get("attributes", []):
+                    if name and name.lower() not in ta.get("name", "").lower():
+                        continue
+                    if kind and kind != "ts_attribute":
+                        continue
+                    results.append(
+                        {
+                            "object_name": obj_short,
+                            "category": cat,
+                            "attr_name": ta.get("name", ""),
+                            "attr_synonym": ta.get("synonym", ""),
+                            "attr_type": _make_type(ta.get("type", "")),
+                            "attr_kind": "ts_attribute",
+                            "ts_name": ts.get("name", ""),
+                        }
+                    )
+            return results
+
+        return []
+
+    def find_predefined(name: str = "", object_name: str = "", limit: int = 500) -> list[dict]:
+        """Find predefined items of ChartsOfCharacteristicTypes, Catalogs, ChartsOfAccounts."""
+        if object_name:
+            object_name = _strip_meta_prefix(object_name)
+        has_path = object_name and "/" in object_name
+
+        # Fast path: index (None = table missing, [] = authoritative for name-only)
+        if idx_reader is not None:
+            results = idx_reader.get_predefined_items(item_name=name, object_name=object_name, limit=limit)
+            if results is not None:
+                # [] is authoritative for name-only; for Category/Name allow live fallback
+                if results or not has_path:
+                    return results
+
+        # Index-authoritative for name-only search (no live XML scan across 6820+ files)
+        if not object_name:
+            return []
+
+        # Auto-resolve category via find_module (same pattern as analyze_object)
+        if not has_path:
+            modules = find_module(object_name)
+            exact = [m for m in modules if (m.get("object_name") or "").lower() == object_name.lower()]
+            if exact:
+                cat = exact[0].get("category", "")
+                if cat:
+                    object_name = f"{cat}/{object_name}"
+                    has_path = True
+
+        if not has_path:
+            return []
+
+        from rlm_tools_bsl.bsl_xml_parsers import parse_predefined_items as _ppi
+
+        obj_short = object_name.split("/")[-1]
+        patterns = [
+            f"{object_name}/Ext/Predefined.xml",
+            f"{object_name}/{obj_short}.mdo",
+        ]
+
+        for p in patterns:
+            found = glob_files_fn(p)
+            if not found:
+                continue
+            try:
+                content = read_file_fn(found[0])
+            except Exception:
+                continue
+            items = _ppi(content)
+            if not items:
+                continue
+            results = []
+            for item in items:
+                if (
+                    name
+                    and name.lower() not in item["name"].lower()
+                    and name.lower() not in item.get("synonym", "").lower()
+                ):
+                    continue
+                results.append(
+                    {
+                        "object_name": obj_short,
+                        "category": object_name.split("/")[0] if "/" in object_name else "",
+                        "item_name": item["name"],
+                        "item_synonym": item.get("synonym", ""),
+                        "types": item.get("types", []),
+                        "item_code": item.get("code", ""),
+                        "is_folder": item.get("is_folder", False),
+                    }
+                )
+            return results
+
+        return []
+
     _fo_lazy = LazyList()
 
     def _build_functional_options() -> list[dict]:
@@ -2161,14 +2360,14 @@ def make_bsl_helpers(
                 return result
         return []
 
-    _VALID_SCOPES = frozenset({"all", "methods", "objects", "regions", "headers"})
+    _VALID_SCOPES = frozenset({"all", "methods", "objects", "regions", "headers", "attributes", "predefined"})
 
     def search(query: str, scope: str = "all", limit: int = 30) -> list[dict]:
-        """Unified search across methods, object synonyms, regions, headers.
+        """Unified search across methods, objects, regions, headers, attributes, predefined.
 
         Args:
             query: Search string (required).
-            scope: Filter — 'all', 'methods', 'objects', 'regions', 'headers'.
+            scope: Filter — 'all', 'methods', 'objects', 'regions', 'headers', 'attributes', 'predefined'.
             limit: Max results (applied to final list).
 
         Returns: list of dicts {text, source_type, object_name, path, path_kind, detail}.
@@ -2182,7 +2381,7 @@ def make_bsl_helpers(
         if empty_query and scope == "all":
             return []
 
-        per_source = max(limit // 4, 3) if scope == "all" else limit
+        per_source = max(limit // 6, 3) if scope == "all" else limit
         results: list[dict] = []
 
         if scope in ("all", "methods"):
@@ -2244,6 +2443,38 @@ def make_bsl_helpers(
                         }
                     )
 
+        if scope in ("all", "attributes"):
+            _attrs = find_attributes(name=query) if query else find_attributes()
+            for a in _attrs[:per_source]:
+                type_str = ", ".join(a["attr_type"]) if a["attr_type"] else ""
+                results.append(
+                    {
+                        "text": f"{a['attr_name']} ({type_str})" if type_str else a["attr_name"],
+                        "source_type": "attribute",
+                        "object_name": a.get("object_name", ""),
+                        "path": a.get("source_file", ""),
+                        "path_kind": "metadata",
+                        "detail": a,
+                    }
+                )
+
+        if scope in ("all", "predefined"):
+            _preds = find_predefined(name=query) if query else find_predefined()
+            for p in _preds[:per_source]:
+                type_str = ", ".join(p["types"]) if p.get("types") else ""
+                results.append(
+                    {
+                        "text": f"{p.get('item_synonym') or p['item_name']} ({type_str})"
+                        if type_str
+                        else p.get("item_synonym") or p["item_name"],
+                        "source_type": "predefined",
+                        "object_name": p.get("object_name", ""),
+                        "path": p.get("source_file", ""),
+                        "path_kind": "metadata",
+                        "detail": p,
+                    }
+                )
+
         return results[:limit]
 
     def get_index_info() -> dict:
@@ -2267,6 +2498,10 @@ def make_bsl_helpers(
             "extension_overrides": stats.get("extension_overrides", 0),
             "has_form_elements": int(stats.get("builder_version") or 0) >= 10 and stats.get("has_metadata", False),
             "form_elements_count": stats.get("form_elements", 0),
+            "has_object_attributes": int(stats.get("builder_version") or 0) >= 11 and stats.get("has_metadata", False),
+            "object_attributes_count": stats.get("object_attributes", 0),
+            "has_predefined_items": int(stats.get("builder_version") or 0) >= 11 and stats.get("has_metadata", False),
+            "predefined_items_count": stats.get("predefined_items", 0),
             "built_at": stats.get("built_at"),
         }
 
@@ -2658,6 +2893,49 @@ def make_bsl_helpers(
         "  print(f\"{result['name']} ({result['synonym']})\")\n"
         "  for v in result['values']:\n"
         "      print(f\"  {v['name']}: {v['synonym']}\")",
+    )
+    _reg(
+        "find_attributes",
+        find_attributes,
+        "find_attributes(name='', object_name='', category='', kind='', limit=500) -> [{object_name, category, attr_name, attr_synonym, attr_type, attr_kind, ts_name}]",
+        "xml",
+        [
+            "реквизит",
+            "attribute",
+            "тип",
+            "type",
+            "измерение",
+            "dimension",
+            "ресурс",
+            "resource",
+            "колонка",
+            "табличная часть",
+        ],
+        "FIND ATTRIBUTE TYPES:\n"
+        "  # By attribute name:\n"
+        "  results = find_attributes('Организация')\n"
+        "  for r in results:\n"
+        "      print(r['object_name'], r['attr_name'], r['attr_type'])\n"
+        "  # All attributes of a document:\n"
+        "  attrs = find_attributes(object_name='РеализацияТоваровУслуг')\n"
+        "  # Only dimensions of a register:\n"
+        "  dims = find_attributes(object_name='ТоварыОрганизаций', kind='dimension')",
+    )
+    _reg(
+        "find_predefined",
+        find_predefined,
+        "find_predefined(name='', object_name='', limit=500) -> [{object_name, category, item_name, item_synonym, types, item_code}]",
+        "xml",
+        ["предопределённ", "predefined", "субконто", "subconto", "счёт", "account", "предопределенн"],
+        "FIND PREDEFINED ITEMS:\n"
+        "  # By name (subconto type question):\n"
+        "  items = find_predefined('РеализуемыеАктивы')\n"
+        "  for i in items:\n"
+        "      print(i['item_name'], i['types'])\n"
+        "  # All predefined of an object:\n"
+        "  all_sub = find_predefined(object_name='ВидыСубконтоХозрасчетные')\n"
+        "  # Predefined of a catalog:\n"
+        "  countries = find_predefined(object_name='СтраныМира')",
     )
 
     _reg(

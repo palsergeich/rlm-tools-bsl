@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.7.0] — 2026-04-03
+
+### Добавлено
+
+- **Таблица `object_attributes`** — реквизиты, измерения, ресурсы и колонки ТЧ с типами для 6 категорий: Documents, Catalogs, InformationRegisters, AccumulationRegisters, ChartsOfCharacteristicTypes, AccountingRegisters
+- **Таблица `predefined_items`** — предопределённые элементы с типами для Catalogs, ChartsOfCharacteristicTypes, ChartsOfAccounts
+- **Хелпер `find_attributes()`** — мгновенный поиск реквизитов по имени, объекту, категории, типу (attribute/dimension/resource/ts_attribute). Параметр `limit` (по умолчанию 500)
+- **Хелпер `find_predefined()`** — мгновенный поиск предопределённых элементов по имени или объекту. Параметр `limit` (по умолчанию 500)
+- **XML-fallback для `find_attributes` и `find_predefined`** — без индекса работают через auto-resolve: `find_module(name)` → `category` → `f"{category}/{name}"` → live XML-парсинг. Те же паттерны что в `analyze_object` и других хелперах
+- **`search()` расширен** — новые scope `"attributes"` и `"predefined"`, интеграция в `scope="all"`
+- **Бизнес-рецепт "тип реквизита"** — автоматическое распознавание вопросов про типы субконто и реквизитов. Алиасы: "субконто", "тип субконто", "предопределённ", "attribute type"
+- **`normalize_type_string()`** — нормализация типов из XML (xs:, cfg:, d4p1:) в читаемый JSON-массив
+- **`parse_predefined_items()`** — парсинг предопределённых элементов (CF Predefined.xml и EDT .mdo)
+- **Build lock** — эксклюзивная блокировка при build/update через OS-level file locking (`msvcrt.locking` на Windows, `fcntl.flock` на Linux). Реентрантная в рамках одного процесса. Автоматически освобождается при падении процесса
+- **Confirm-механизм для MCP-тула `rlm_index`** — действия `build` и `drop` требуют подтверждения пользователя. AI-модель не может автоматически запустить построение индекса (5-10 минут, блокирует I/O); должна спросить пользователя и получить явное согласие. Причина: слабые модели (Grok, Kilo Auto) при обнаружении отсутствующего индекса самостоятельно вызывали `rlm_index(action='build')`, блокируя сервер на всё время построения
+- **Стратегия без индекса** — секция `== INDEX ==` теперь всегда присутствует; без индекса содержит подробные hints: что работает через fallback, что возвращает пустые результаты, явный запрет на `rlm_index(action='build')`
+- **Предупреждение в `RLM_START_DESCRIPTION`** — "NEVER call rlm_index(action='build') yourself"
+- **E2E промпт #8** — "Attribute Types & Predefined Items" с expected ranges для ERP 2.5
+- BUILDER_VERSION 10 → 11 (автоматический ребилд при обновлении)
+
+### Изменения поведения
+
+- **`search(scope='all')`** — `per_source` снижен с `limit // 4` до `limit // 6` (по 5 результатов каждого типа вместо 7 при `limit=30`) из-за 2 новых source_type
+- **CLI `build`/`update`** — ловят `RuntimeError` от build lock и выводят сообщение вместо traceback
+- **CLI `build`/`info`** — выводят счётчики Attributes, Predefined, Synonyms
+
+### Исправления
+
+- **Фикс парсера CF ТЧ** — `_cf_parse_attributes()` теперь ищет атрибуты табличных частей в `<ChildObjects>` (ранее возвращал пустой список для CF конфигураций)
+- **`find_predefined` — `_strip_meta_prefix`** для входного `object_name` (убирает "Справочник.", "ПланВидовХарактеристик." и т.п.)
+
 ## [1.6.3] — 2026-04-01
 
 ### Добавлено

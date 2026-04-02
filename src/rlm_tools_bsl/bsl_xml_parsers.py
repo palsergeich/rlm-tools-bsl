@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import xml.etree.ElementTree as ET
 from rlm_tools_bsl.format_detector import METADATA_CATEGORIES
 
@@ -113,6 +114,43 @@ def _cf_parse_type(props, ns: dict = _NS_CF) -> str:
     return ", ".join(types)
 
 
+_XS_TYPE_MAP: dict[str, str] = {
+    "xs:string": "String",
+    "xs:decimal": "Number",
+    "xs:boolean": "Boolean",
+    "xs:dateTime": "DateTime",
+    "xs:base64Binary": "ValueStorage",
+}
+
+
+def _strip_ns_prefix(t: str) -> str:
+    """Strip XML namespace prefix: 'cfg:CatalogRef.X' -> 'CatalogRef.X'."""
+    if ":" in t:
+        return t.split(":", 1)[1]
+    return t
+
+
+def normalize_type_string(raw: str) -> str:
+    """Normalize 1C type string to JSON array.
+
+    Input: comma-separated types from parse_metadata_xml, e.g.
+        "cfg:CatalogRef.X, xs:string, d4p1:DocumentRef.Y"
+    Output: JSON array string, e.g.
+        '["CatalogRef.X", "String", "DocumentRef.Y"]'
+    """
+    if not raw or not raw.strip():
+        return "[]"
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    normalized = []
+    for p in parts:
+        mapped = _XS_TYPE_MAP.get(p)
+        if mapped:
+            normalized.append(mapped)
+        else:
+            normalized.append(_strip_ns_prefix(p))
+    return json.dumps(normalized, ensure_ascii=False)
+
+
 def _cf_parse_attributes(parent, ns: dict = _NS_CF) -> list[dict]:
     """Parse CF <Attribute> elements under parent."""
     attrs = []
@@ -184,7 +222,10 @@ def _parse_cf_xml(root) -> dict:
         ts_props = ts_el.find("md:Properties", ns)
         ts_name = _xml_find_text(ts_props, "md:Name", ns) if ts_props is not None else ""
         ts_synonym = _cf_find_synonym(ts_props, ns) if ts_props is not None else ""
-        ts_attrs = _cf_parse_attributes(ts_el, ns)
+        # TS attributes live in <ChildObjects> (CF), not directly under <TabularSection>
+        ts_child_objects = ts_el.find("md:ChildObjects", ns)
+        ts_search_el = ts_child_objects if ts_child_objects is not None else ts_el
+        ts_attrs = _cf_parse_attributes(ts_search_el, ns)
         tab_sections.append({"name": ts_name, "synonym": ts_synonym, "attributes": ts_attrs})
     if tab_sections:
         result["tabular_sections"] = tab_sections
@@ -674,6 +715,131 @@ def parse_enum_xml(xml_content: str) -> dict | None:
     if _MDO_NS_URI in xml_content:
         return _parse_mdo_enum(xml_content)
     return _parse_cf_enum(xml_content)
+
+
+# --- Predefined Items parsers ---
+
+
+def _parse_cf_predefined(root) -> list[dict] | None:
+    """Parse CF-format Predefined.xml or PredefinedData section."""
+    # Find PredefinedData container — could be root or child
+    predef_el = root.find(".//{http://v8.1c.ru/8.3/MDClasses}PredefinedData")
+    if predef_el is None:
+        predef_el = root.find(".//PredefinedData")
+    if predef_el is None:
+        # Try root itself (if the whole file IS PredefinedData)
+        if root.tag.endswith("PredefinedData"):
+            predef_el = root
+    if predef_el is None:
+        return None
+
+    items: list[dict] = []
+    for item_el in predef_el:
+        tag = item_el.tag.split("}")[-1] if "}" in item_el.tag else item_el.tag
+        if tag != "Item":
+            continue
+        name = ""
+        synonym = ""
+        code = ""
+        is_folder = False
+        types: list[str] = []
+        for ch in item_el:
+            ch_tag = ch.tag.split("}")[-1] if "}" in ch.tag else ch.tag
+            if ch_tag == "Name" and ch.text:
+                name = ch.text.strip()
+            elif ch_tag == "Description" and ch.text:
+                synonym = ch.text.strip()
+            elif ch_tag == "Code" and ch.text:
+                code = ch.text.strip()
+            elif ch_tag == "IsFolder" and ch.text:
+                is_folder = ch.text.strip().lower() == "true"
+            elif ch_tag == "Type":
+                for t in ch:
+                    t_tag = t.tag.split("}")[-1] if "}" in t.tag else t.tag
+                    if t_tag == "Type" and t.text:
+                        raw = t.text.strip()
+                        types.append(_strip_ns_prefix(raw))
+        if name:
+            items.append(
+                {
+                    "name": name,
+                    "synonym": synonym,
+                    "code": code,
+                    "types": types,
+                    "is_folder": is_folder,
+                }
+            )
+    return items if items else None
+
+
+def _parse_mdo_predefined(root) -> list[dict] | None:
+    """Parse EDT/MDO-format <predefined> section."""
+    predef_el = None
+    for ch in root:
+        local = ch.tag.split("}")[-1] if "}" in ch.tag else ch.tag
+        if local == "predefined":
+            predef_el = ch
+            break
+    if predef_el is None:
+        return None
+
+    items: list[dict] = []
+    for item_el in predef_el:
+        local = item_el.tag.split("}")[-1] if "}" in item_el.tag else item_el.tag
+        if local != "items":
+            continue
+        name = ""
+        synonym = ""
+        code = ""
+        is_folder = False
+        types: list[str] = []
+        for ch in item_el:
+            ch_tag = ch.tag.split("}")[-1] if "}" in ch.tag else ch.tag
+            if ch_tag == "name" and ch.text:
+                name = ch.text.strip()
+            elif ch_tag == "description" and ch.text:
+                synonym = ch.text.strip()
+            elif ch_tag == "code" and ch.text:
+                code = ch.text.strip()
+            elif ch_tag == "isFolder" and ch.text:
+                is_folder = ch.text.strip().lower() == "true"
+            elif ch_tag == "type":
+                for t in ch:
+                    t_tag = t.tag.split("}")[-1] if "}" in t.tag else t.tag
+                    if t_tag == "types" and t.text:
+                        types.append(t.text.strip())
+        if name:
+            items.append(
+                {
+                    "name": name,
+                    "synonym": synonym,
+                    "code": code,
+                    "types": types,
+                    "is_folder": is_folder,
+                }
+            )
+    return items if items else None
+
+
+def parse_predefined_items(xml_content: str) -> list[dict] | None:
+    """Parse predefined items from Predefined.xml (CF) or .mdo (EDT).
+
+    Returns: list of dicts {name, synonym, code, types: list[str], is_folder: bool}
+    or None if no predefined items found.
+    """
+    try:
+        root = ET.fromstring(xml_content)
+    except ET.ParseError:
+        return None
+
+    # Detect format by namespace
+    root_ns = ""
+    if "}" in root.tag:
+        root_ns = root.tag.split("}")[0].lstrip("{")
+
+    if _MDO_NS_URI in root_ns:
+        return _parse_mdo_predefined(root)
+    return _parse_cf_predefined(root)
 
 
 # --- FunctionalOption XML parsers ---

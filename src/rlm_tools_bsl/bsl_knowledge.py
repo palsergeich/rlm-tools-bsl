@@ -64,7 +64,7 @@ Step 0 — UNDERSTAND: decode the business question
   analyze_subsystem('ПодсистемаИмя') → all objects in the business domain
 
 Step 1 — DISCOVER: find what you need
-  search(query)                          → BROAD first pass: methods + objects + regions + headers
+  search(query)                          → BROAD first pass: methods + objects + regions + headers + attributes + predefined
   find_module('name') or find_by_type('Documents', 'name') → get file paths
   search_objects('бизнес-имя')           → precise: find 1C OBJECTS by Russian synonym
   search_methods('substring')            → precise: find METHODS by code name (FTS)
@@ -72,6 +72,8 @@ Step 1 — DISCOVER: find what you need
   search_module_headers('текст')         → precise: find modules by header
   NOTE: search() = broad first pass; specialized helpers = precise follow-up when you need specific fields
   parse_object_xml(path) → attributes, tabular sections, dimensions, resources
+  find_attributes('ИмяРеквизита')        → INSTANT: attribute name → type(s)
+  find_predefined('ИмяПредопределённого') → INSTANT: predefined item → type(s)
   parse_form(object_name) → form handlers, commands, attributes (for UI/form analysis tasks)
 
 Step 2 — READ: understand the code
@@ -253,6 +255,28 @@ _BUSINESS_RECIPES: dict[str, dict[str, list[str]]] = {
             "parse_object_xml(path) → метаданные объекта (реквизиты, ТЧ)",
         ],
     },
+    "тип реквизита": {
+        "compact": [
+            "find_predefined('ИмяСубконто') — if asking about subconto/predefined",
+            "find_attributes('ИмяРеквизита') — if asking about attribute type",
+            "Done — types are in the result",
+        ],
+        "full": [
+            "Step 1: find_predefined('Name') or find_attributes('Name')",
+            "Step 2: If not found, parse_object_xml('Category/ObjectName') for on-demand parse",
+            "Step 3: Report types from result",
+        ],
+        "code_hint": (
+            "# Тип субконто / предопределённого:\n"
+            "items = find_predefined('РеализуемыеАктивы')\n"
+            "for i in items:\n"
+            "    print(i['item_name'], i['types'])\n\n"
+            "# Тип реквизита:\n"
+            "attrs = find_attributes('Организация')\n"
+            "for a in attrs:\n"
+            "    print(a['object_name'], a['attr_name'], a['attr_type'])"
+        ),
+    },
 }
 
 _RECIPE_ALIASES: dict[str, str] = {
@@ -262,6 +286,10 @@ _RECIPE_ALIASES: dict[str, str] = {
     "обработчики формы": "события формы",
     "элементы формы": "события формы",
     "кнопки формы": "события формы",
+    "субконто": "тип реквизита",
+    "тип субконто": "тип реквизита",
+    "предопределённ": "тип реквизита",
+    "attribute type": "тип реквизита",
 }
 
 _STRATEGY_IO_SECTION = """\
@@ -366,6 +394,12 @@ def get_strategy(
         label = f"Index v{builder_version} ({methods_count} methods, {calls_count} call edges"
         if synonyms_count:
             label += f", {synonyms_count} synonyms"
+        oa_count = idx_stats.get("object_attributes", 0)
+        pi_count = idx_stats.get("predefined_items", 0)
+        if oa_count:
+            label += f", {oa_count} attributes"
+        if pi_count:
+            label += f", {pi_count} predefined"
         if config_name:
             label += f", config: {config_name}"
             if config_version:
@@ -402,6 +436,10 @@ def get_strategy(
         if bver >= 8:
             instant_helpers.append("search_regions()")
             instant_helpers.append("search_module_headers()")
+        if oa_count:
+            instant_helpers.append("find_attributes()")
+        if pi_count:
+            instant_helpers.append("find_predefined()")
         instant_helpers.append("search()")
         idx_lines.append(f"INSTANT from index: {', '.join(instant_helpers)}.")
 
@@ -423,6 +461,7 @@ def get_strategy(
             "  - find_callers_context() returns instantly — no need to limit scope with hint, search the whole codebase.",
             "  - Batch 5-10 helpers per rlm_execute (index calls are <1ms each).",
             "  - extract_procedures + find_exports + find_callers_context in ONE call is fine.",
+            "  - find_attributes() and find_predefined() are INSTANT from index — use for attribute/subconto type questions.",
         ]
         if file_paths_count:
             tips.extend(
@@ -446,6 +485,21 @@ def get_strategy(
         for w in idx_warnings or []:
             idx_lines.append(f"WARNING: {w}")
         parts.append("\n".join(idx_lines))
+    else:
+        parts.append(
+            "\n== INDEX ==\n"
+            "No pre-built index. All helpers work via filesystem fallback (slower on large configs).\n"
+            "NEVER call rlm_index(action='build') — it takes 5-10 minutes and blocks the server. "
+            "Only the USER decides when to build indexes. Work with what you have.\n"
+            "WITHOUT INDEX:\n"
+            "  - find_attributes(object_name='X') — WORKS (auto-resolves category via find_module, parses XML live)\n"
+            "  - find_predefined(object_name='X') — WORKS (parses Predefined.xml live)\n"
+            "  - find_attributes('name') without object_name — EMPTY (cannot scan all files)\n"
+            "  - find_predefined('name') without object_name — EMPTY (cannot scan all files)\n"
+            "  - search_methods, search_objects, search_regions — EMPTY (require index)\n"
+            "  - parse_object_xml(path) — WORKS (always, direct XML read)\n"
+            "  - All other helpers — WORK via filesystem (slower but functional)"
+        )
 
     # --- Effort & limits ---
     parts.append(f"\n== EFFORT: {effort} ==")
@@ -554,7 +608,9 @@ RLM_START_DESCRIPTION = (
     "Returns session_id, detected config format, BSL helper functions, and exploration strategy.\n"
     "IMPORTANT: Use effort='high' for any multi-aspect analysis (recommended default).\n"
     "Use effort='low' ONLY for single quick lookups (find one module, read one procedure).\n"
-    "For large 1C configs (23K+ files), NEVER grep on broad paths -- use find_module() first."
+    "For large 1C configs (23K+ files), NEVER grep on broad paths -- use find_module() first.\n"
+    "NEVER call rlm_index(action='build') yourself — index building takes 5-10 minutes and blocks I/O. "
+    "If no index exists, work without it — all helpers have filesystem fallback."
 )
 
 RLM_EXECUTE_DESCRIPTION = (
@@ -568,7 +624,8 @@ RLM_EXECUTE_DESCRIPTION = (
     "Composite: analyze_object, analyze_subsystem, find_custom_modifications,\n"
     "find_event_subscriptions, find_scheduled_jobs, find_register_movements,\n"
     "find_register_writers, analyze_document_flow, find_based_on_documents,\n"
-    "find_print_forms, find_functional_options, find_roles, find_enum_values.\n"
+    "find_print_forms, find_functional_options, find_roles, find_enum_values,\n"
+    "find_attributes, find_predefined.\n"
     "Standard: read_file, read_files, grep, grep_summary, grep_read, glob_files, tree, find_files.\n"
     "CRITICAL: grep on path='.' ALWAYS times out on large 1C configs. Use find_module() first."
 )

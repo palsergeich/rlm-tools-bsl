@@ -68,6 +68,7 @@ This prompt exercises all 38 BSL helpers without explicitly naming them. The AI 
 - **effort**: `high` (default since v1.1.0) — gives 50 execute calls, enough for full coverage
 - **max_output_chars**: `30000` — large modules produce verbose output
 - **execution_timeout_seconds**: `120` — composite helpers on large configs need time
+- **Индекс обязателен для слабых моделей** — подробности в [HELPERS.md](HELPERS.md#индекс-и-слабые-модели)
 
 ## Test results (v1.2.0, ERP 23K+ files, 617K methods index)
 
@@ -733,3 +734,118 @@ This prompt verifies the form XML parsing helper from v1.6.0: `parse_form()` wit
 | CommonForms total | 300–600 |
 | DB size overhead | +60–73 MB (+6.5%) |
 | Build time overhead | +6–11 с (+1.5–2.6%) |
+
+---
+
+# Attribute Types & Predefined Items Prompt — E2E Test for v1.7.0 Helpers
+
+Use this prompt to verify the new `find_attributes()` and `find_predefined()` helpers added in v1.7.0.
+Replace `<path>` with the actual path to your 1C source code (EDT or CF format). Requires index v11+ (`rlm-bsl-index index build <path>`).
+
+**Background:** Before v1.7.0, answering "What type is subconto X?" required 7 `rlm_execute` calls (2 errors), manual `Predefined.xml` search, and parsing 810-line XML. Now it takes 1 call.
+
+---
+
+## Prompt
+
+```
+Мне нужно проверить новые возможности поиска реквизитов с типами и предопределённых элементов в конфигурации ERP.
+Путь: <путь к каталогу исходников 1С>
+
+Используй ТОЛЬКО MCP-сервер rlm-tools-bsl (rlm_start / rlm_execute / rlm_end).
+Не используй встроенные инструменты чтения файлов — всё делай через песочницу.
+
+Мне нужно проверить:
+
+1. **Диагностика индекса**:
+   - Вызови get_index_info() и проверь: has_object_attributes = True, has_predefined_items = True
+   - Выведи object_attributes_count и predefined_items_count
+   - Если builder_version < 11 — сообщи, что нужно перестроить индекс
+
+2. **Поиск реквизитов по имени**:
+   - find_attributes('Организация') → реквизиты из разных документов, справочников, регистров
+   - find_attributes('Контрагент') → все реквизиты с именем Контрагент
+   - find_attributes('Сумма') → проверка что возвращает тип (Number) и объект-владелец
+   - Для каждого результата покажи: object_name, attr_name, attr_type, attr_kind
+
+3. **Реквизиты конкретного объекта**:
+   - find_attributes(object_name='РеализацияТоваровУслуг') → ВСЕ реквизиты документа с типами
+   - Сгруппируй по attr_kind: attribute, ts_attribute (колонки ТЧ)
+   - Покажи для ТЧ (ts_attribute): ts_name + attr_name + attr_type
+   - find_attributes(object_name='ТоварыОрганизаций', kind='dimension') → только измерения регистра
+
+4. **Предопределённые элементы**:
+   - find_predefined('РеализуемыеАктивы') → тип субконто за 1 вызов (ключевой сценарий!)
+   - find_predefined(object_name='ВидыСубконтоХозрасчетные') → все предопределённые субконто
+   - find_predefined('Рубль') или find_predefined('USD') → предопределённые валюты
+   - Для каждого покажи: item_name, item_synonym, types, item_code
+
+5. **Поиск через search()**:
+   - search('Организация', scope='attributes') → реквизиты
+   - search('Реализуемые активы', scope='predefined') → предопределённые по синониму
+   - search('Контрагент') → scope='all' должен включить attribute и predefined в результатах
+   - Проверь, что source_type содержит 'attribute' и 'predefined'
+
+6. **Бизнес-сценарий — тип субконто**:
+   - Задача: "Какого типа субконто Реализуемые активы?"
+   - Используй бизнес-рецепт: help('тип реквизита')
+   - Выполни рецепт: find_predefined('РеализуемыеАктивы') → types
+   - Сравни: раньше это требовало 7 вызовов, теперь — 1
+
+7. **Статистика**:
+   - Общее количество проиндексированных реквизитов (object_attributes_count)
+   - Общее количество предопределённых элементов (predefined_items_count)
+   - Распределение реквизитов по kind: attribute, dimension, resource, ts_attribute
+   - Распределение реквизитов по category: Documents, Catalogs, InformationRegisters и т.д.
+   - Топ-5 объектов с наибольшим количеством реквизитов
+
+Начни с get_index_info() для проверки доступности, затем help('тип реквизита') для рецепта.
+Обрати внимание: find_attributes() и find_predefined() — мгновенные (из индекса), не требуют чтения XML.
+
+Дай итоговую сводку со всеми цифрами. Сохрани файл с анализом в текущий рабочий каталог своими инструментами (НЕ через rlm_execute).
+
+## ВАЖНЫЕ ПРАВИЛА
+
+1. Каждый rlm_execute должен батчить несколько связанных операций. Плохо: один вызов на один хелпер. Хорошо: несколько хелперов + print() в одном вызове.
+2. Переменные сохраняются между вызовами rlm_execute.
+3. Используй print() для вывода результатов.
+4. В конце ОБЯЗАТЕЛЬНО вызови rlm_end для освобождения ресурсов.
+```
+
+---
+
+## What it covers
+
+This prompt verifies the 2 new helpers from v1.7.0 (`find_attributes`, `find_predefined`), type normalization, search integration, business recipe routing, and the key use case that motivated the feature.
+
+| Area | Expected helpers | What to verify |
+|------|-----------------|----------------|
+| Index diagnostics | `get_index_info()` | builder_version=11, has_object_attributes=True, has_predefined_items=True |
+| Attribute search by name | `find_attributes(name='X')` | Finds across all indexed categories, returns normalized types |
+| Attribute search by object | `find_attributes(object_name='X')` | All attributes including TS columns |
+| Attribute search by kind | `find_attributes(kind='dimension')` | Filters by attribute/dimension/resource/ts_attribute |
+| Predefined by name | `find_predefined(name='X')` | Finds predefined items with types |
+| Predefined by object | `find_predefined(object_name='X')` | All predefined of a chart/catalog |
+| Search integration | `search(query, scope='attributes')` | New source_type='attribute' in results |
+| Search integration | `search(query, scope='predefined')` | New source_type='predefined' in results |
+| Synonym search | `search('Реализуемые активы', scope='predefined')` | Finds by Russian synonym |
+| Business recipe | `help('тип реквизита')` | Recipe with find_predefined + find_attributes |
+| Key scenario | `find_predefined('РеализуемыеАктивы')` | 1 call instead of 7 |
+| Type normalization | attr_type field | `["CatalogRef.X"]` not `"cfg:CatalogRef.X"` |
+| Help | `help('attributes')`, `help('predefined')` | Recipes displayed correctly |
+
+## Expected results on ERP 2.5
+
+| Metric | Expected range |
+|--------|---------------|
+| object_attributes_count | 38,000–73,000 |
+| predefined_items_count | 2,000–4,500 |
+| builder_version | 11 |
+| Attributes of РеализацияТоваровУслуг | 200–250 (attributes + ts_attributes across all ТЧ) |
+| Predefined of ВидыСубконтоХозрасчетные | 50–80 |
+| find_attributes('Организация') hits | 470–500+ (capped at 500, across all categories) |
+| find_predefined('РеализуемыеАктивы') | 1–2 results with 2+ types (custom prefix may add a second) |
+| search('Организация', scope='attributes') | 5+ results |
+| Categories covered | Documents, Catalogs, InformationRegisters, AccumulationRegisters, ChartsOfCharacteristicTypes, AccountingRegisters |
+| DB size overhead | +25–35 MB (+3–4%) |
+| Build time overhead | +30–45s |
