@@ -577,12 +577,12 @@ def make_bsl_helpers(
 
     def _strip_code_line(line: str) -> str:
         """Remove comments and string literals from a BSL code line."""
+        # Strip string literals first (so "//" inside strings is not treated as comment)
+        line = _re_string_literal.sub("", line)
         # Strip comment (// with or without space)
         ci = line.find("//")
         if ci >= 0:
             line = line[:ci]
-        # Strip string literals
-        line = _re_string_literal.sub("", line)
         return line
 
     def find_callers_context(
@@ -1978,9 +1978,11 @@ def make_bsl_helpers(
                 limit=limit,
             )
             if results is not None:
-                # [] is authoritative for name-only; for Category/Name allow live fallback
-                if results or not has_path:
+                if results:  # non-empty — authoritative
                     return results
+                if not object_name:  # name-only search, [] is authoritative
+                    return results
+                # object_name given but empty result — try auto-resolve below
 
         # Auto-resolve category via find_module (same pattern as analyze_object)
         if object_name and not has_path:
@@ -2014,8 +2016,15 @@ def make_bsl_helpers(
             obj_short = object_name.split("/")[-1]
             cat = object_name.split("/")[0]
 
+            # Validate category if provided
+            if category and category.lower() != cat.lower():
+                return []
+
             for attr in parsed.get("attributes", []):
-                if name and name.lower() not in attr.get("name", "").lower():
+                if name and (
+                    name.lower() not in attr.get("name", "").lower()
+                    and name.lower() not in attr.get("synonym", "").lower()
+                ):
                     continue
                 if kind and kind != "attribute":
                     continue
@@ -2031,7 +2040,10 @@ def make_bsl_helpers(
                     }
                 )
             for dim in parsed.get("dimensions", []):
-                if name and name.lower() not in dim.get("name", "").lower():
+                if name and (
+                    name.lower() not in dim.get("name", "").lower()
+                    and name.lower() not in dim.get("synonym", "").lower()
+                ):
                     continue
                 if kind and kind != "dimension":
                     continue
@@ -2047,7 +2059,10 @@ def make_bsl_helpers(
                     }
                 )
             for res in parsed.get("resources", []):
-                if name and name.lower() not in res.get("name", "").lower():
+                if name and (
+                    name.lower() not in res.get("name", "").lower()
+                    and name.lower() not in res.get("synonym", "").lower()
+                ):
                     continue
                 if kind and kind != "resource":
                     continue
@@ -2064,7 +2079,10 @@ def make_bsl_helpers(
                 )
             for ts in parsed.get("tabular_sections", []):
                 for ta in ts.get("attributes", []):
-                    if name and name.lower() not in ta.get("name", "").lower():
+                    if name and (
+                        name.lower() not in ta.get("name", "").lower()
+                        and name.lower() not in ta.get("synonym", "").lower()
+                    ):
                         continue
                     if kind and kind != "ts_attribute":
                         continue
@@ -2079,7 +2097,7 @@ def make_bsl_helpers(
                             "ts_name": ts.get("name", ""),
                         }
                     )
-            return results
+            return results[:limit]
 
         return []
 
@@ -2093,9 +2111,11 @@ def make_bsl_helpers(
         if idx_reader is not None:
             results = idx_reader.get_predefined_items(item_name=name, object_name=object_name, limit=limit)
             if results is not None:
-                # [] is authoritative for name-only; for Category/Name allow live fallback
-                if results or not has_path:
+                if results:  # non-empty — authoritative
                     return results
+                if not object_name:  # name-only search, [] is authoritative
+                    return results
+                # object_name given but empty result — try auto-resolve below
 
         # Index-authoritative for name-only search (no live XML scan across 6820+ files)
         if not object_name:
@@ -2152,7 +2172,7 @@ def make_bsl_helpers(
                         "is_folder": item.get("is_folder", False),
                     }
                 )
-            return results
+            return results[:limit]
 
         return []
 

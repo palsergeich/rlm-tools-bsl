@@ -4,16 +4,16 @@ from dataclasses import dataclass
 
 
 BSL_PATTERNS = {
-    "procedure_def": r"(Процедура|Функция)\s+(\w+)\s*\(([^)]*)\)\s*(Экспорт)?",
-    "procedure_end": r"^\s*(КонецПроцедуры|КонецФункции)",
-    "export_marker": r"\)\s*Экспорт\s*$",
+    "procedure_def": r"(Процедура|Функция|Procedure|Function)\s+(\w+)\s*\(([^)]*)\)\s*(Экспорт|Export)?",
+    "procedure_end": r"^\s*(КонецПроцедуры|КонецФункции|EndProcedure|EndFunction)",
+    "export_marker": r"\)\s*(Экспорт|Export)\s*$",
     "module_call": r"(\w+)\.(\w+)\s*\(",
-    "region_start": r"#Область\s+(\w+)",
-    "region_end": r"#КонецОбласти",
-    "preprocessor_if": r"#Если\s+.+\s+Тогда",
-    "preprocessor_endif": r"#КонецЕсли",
-    "new_structure": r"Новый\s+Структура\(",
-    "structure_insert": r'\.Вставить\(\s*"(\w+)"',
+    "region_start": r"#(?:Область|Region)\s+(\w+)",
+    "region_end": r"#(?:КонецОбласти|EndRegion)",
+    "preprocessor_if": r"#(?:Если|If)\s+.+\s+(?:Тогда|Then)",
+    "preprocessor_endif": r"#(?:КонецЕсли|EndIf)",
+    "new_structure": r"(?:Новый|New)\s+(?:Структура|Structure)\(",
+    "structure_insert": r'\.(?:Вставить|Insert)\(\s*"(\w+)"',
 }
 
 

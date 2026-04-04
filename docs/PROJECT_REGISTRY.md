@@ -27,10 +27,10 @@ rlm_start(project="My Config", query="find all exported procedures")
 | Действие | Параметры                                   | Пример                                                              |
 | -------- | ------------------------------------------- | ------------------------------------------------------------------- |
 | `list`   | --                                          | `rlm_projects(action="list")`                                       |
-| `add`    | `name`, `path`, `description` (опц.)        | `rlm_projects(action="add", name="Dev", path="/data/dev-config")`   |
+| `add`    | `name`, `path`, `description` (опц.), `password` (опц.) | `rlm_projects(action="add", name="Dev", path="/data/dev-config", password="...")` |
 | `remove` | `name`                                      | `rlm_projects(action="remove", name="Dev")`                         |
 | `rename` | `name`, `new_name`                          | `rlm_projects(action="rename", name="Dev", new_name="Development")` |
-| `update` | `name`, `path` (опц.), `description` (опц.) | `rlm_projects(action="update", name="Dev", description="Updated")`  |
+| `update` | `name`, `path` (опц.), `description` (опц.), `password` (опц.), `clear_password` (опц.) | `rlm_projects(action="update", name="Dev", password="new")` |
 
 ## Использование в rlm_start и rlm_index
 
@@ -57,6 +57,22 @@ rlm_index(action="info", project="My Config")
 
 При неоднозначном совпадении (несколько проектов подходят) сессия не создаётся -- возвращается список вариантов.
 
+### Пароль проекта для управления индексами
+
+При регистрации проекта можно (и рекомендуется) задать пароль:
+
+```
+rlm_projects(action="add", name="ERP", path="D:\\Bases\\ERP", password="МойПароль")
+```
+
+Пароль хранится как SHA-256 hash + salt в `projects.json`. Без пароля управление индексами (build/update/drop) через MCP заблокировано.
+
+Управление паролем:
+- Установить/сменить: `rlm_projects(action="update", name="ERP", password="МойПароль")`
+- Удалить (заблокировать MCP-индексацию): `rlm_projects(action="update", name="ERP", clear_password=true)`
+
+**Зачем нужен пароль проекта?** Слабые AI-модели при обнаружении отсутствующего индекса самостоятельно запускают построение без согласия пользователя. Построение занимает 5-10 минут и блокирует I/O сервера. Пароль гарантирует, что только человек принимает решение об управлении индексами — модель не знает пароль и не может обойти проверку. CLI-интерфейс `rlm-bsl-index` не требует пароля.
+
 ### Подсказка о регистрации
 
 Если `path` передан напрямую и не зарегистрирован в реестре, ответ `rlm_start` включит `project_hint` с предложением добавить его.
@@ -71,6 +87,8 @@ rlm_index(action="info", project="My Config")
 - "Добавь в реестр проект TestBuh, путь /data/test-config, описание 'Тестовая бухгалтерия'"
 - "Переименуй проект TestBuh в TestingBuh"
 - "Удали проект Test UNF из реестра"
+- "Добавь проект ERP с паролем для управления индексами"
+- "Смени пароль проекта ERP"
 
 ## Где хранится реестр
 

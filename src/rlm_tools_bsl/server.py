@@ -409,6 +409,12 @@ def _rlm_start(
                         idx_warnings.append(msg)
                         logger.warning("rlm_start: session=%s %s", session_id, msg)
         except Exception as e:
+            if idx_reader is not None:
+                try:
+                    idx_reader.close()
+                except Exception:
+                    pass
+                idx_reader = None
             logger.warning("rlm_start: session=%s index load failed: %s", session_id, e)
         t_index = time.monotonic() - t_step
 
@@ -897,14 +903,30 @@ async def rlm_projects(
     path: Annotated[str | None, Field(description="Absolute filesystem path to 1C sources (required for add)")] = None,
     description: Annotated[str | None, Field(description="Optional project description")] = None,
     new_name: Annotated[str | None, Field(description="New name for rename action")] = None,
+    password: Annotated[
+        str | None,
+        Field(description="Project password for index management. Required for build/update/drop via rlm_index."),
+    ] = None,
+    clear_password: Annotated[
+        bool, Field(description="Remove project password (disables index management via MCP)")
+    ] = False,
 ) -> str:
     """Manage the server-side project registry -- a mapping of human-readable project names to filesystem paths.
     Use 'list' to see all registered 1C projects, 'add' to register a new project (name + path + optional description),
     'remove' to unregister, 'rename' to change a project's display name, 'update' to change path or description.
     After registering a project, you can open sessions via rlm_start(project='name') instead of specifying the full path.
-    When the user mentions a project by name, call list first to find available projects."""
+    When the user mentions a project by name, call list first to find available projects.
+    Set password when adding/updating to enable index management (build/update/drop) via rlm_index."""
     return await anyio.to_thread.run_sync(
-        lambda: _rlm_projects(action=action, name=name, path=path, description=description, new_name=new_name)
+        lambda: _rlm_projects(
+            action=action,
+            name=name,
+            path=path,
+            description=description,
+            new_name=new_name,
+            password=password,
+            clear_password=clear_password,
+        )
     )
 
 
@@ -914,6 +936,8 @@ def _rlm_projects(
     path: str | None = None,
     description: str | None = None,
     new_name: str | None = None,
+    password: str | None = None,
+    clear_password: bool = False,
 ) -> str:
     from rlm_tools_bsl.projects import RegistryCorruptedError, get_registry
 
@@ -938,7 +962,7 @@ def _rlm_projects(
                 return json.dumps({"error": "name is required for 'add'"}, ensure_ascii=False)
             if not path:
                 return json.dumps({"error": "path is required for 'add'"}, ensure_ascii=False)
-            entry = reg.add(name, path, description or "")
+            entry = reg.add(name, path, description or "", password=password)
             return json.dumps({"added": entry}, ensure_ascii=False)
 
         if action == "remove":
@@ -958,7 +982,9 @@ def _rlm_projects(
         if action == "update":
             if not name:
                 return json.dumps({"error": "name is required for 'update'"}, ensure_ascii=False)
-            entry = reg.update(name, path=path, description=description)
+            entry = reg.update(
+                name, path=path, description=description, password=password, clear_password=clear_password
+            )
             return json.dumps({"updated": entry}, ensure_ascii=False)
 
         return json.dumps({"error": f"Unknown action: {action}"}, ensure_ascii=False)
@@ -986,26 +1012,82 @@ async def rlm_index(
     no_synonyms: Annotated[bool, Field(description="Skip object synonyms (build only)")] = False,
     confirm: Annotated[
         str | None,
-        Field(description="Confirmation for build/drop. Only pass if the user explicitly said 'yes' or 'build'."),
+        Field(
+            description="Project password for build/update/drop confirmation. "
+            "Ask the user for their project password when server returns approval_required."
+        ),
     ] = None,
 ) -> str:
     """Manage the BSL method index — build, update, get info, or drop.
     Full parity with CLI 'rlm-bsl-index'. Use 'build' to create index from scratch,
     'update' for incremental refresh, 'info' for statistics, 'drop' to remove the index.
     Provide either 'path' (filesystem path) or 'project' (registered project name).
-    'build' and 'drop' require user confirmation — tell the user and wait for explicit approval."""
-    _CONFIRM_SECRET = "user_approved"
-    if action in ("build", "drop") and confirm != _CONFIRM_SECRET:
-        return json.dumps(
-            {
-                "confirmation_required": True,
-                "action": action,
-                "message": f"Index {action} takes 5-10 minutes on large configs. "
-                "Tell the user and WAIT for their explicit approval. "
-                "Do NOT proceed automatically — the user must say 'yes' or 'build the index'.",
-            },
-            ensure_ascii=False,
-        )
+    'build', 'update' and 'drop' require a registered project with password —
+    ask the user for the project password."""
+    if action in ("build", "update", "drop"):
+        from rlm_tools_bsl.projects import RegistryCorruptedError, get_registry
+
+        # MCP: path запрещён для admin-действий
+        if path is not None:
+            return json.dumps(
+                {
+                    "error": f"Action '{action}' requires a registered project with password. "
+                    "Use project=... instead of path=... "
+                    "Register the project first: rlm_projects(action='add', name='...', path='...', password='...')"
+                },
+                ensure_ascii=False,
+            )
+
+        if not project:
+            return json.dumps(
+                {"error": f"Action '{action}' requires project=... (registered project with password)."},
+                ensure_ascii=False,
+            )
+
+        # Resolve project name
+        try:
+            reg = get_registry()
+            matches, method = reg.resolve(project)
+        except RegistryCorruptedError as exc:
+            return json.dumps(
+                {"error": f"Registry file is corrupted: {exc}. Run rlm_projects(action='list') after fixing the file."},
+                ensure_ascii=False,
+            )
+        if not matches:
+            return json.dumps({"error": f"Project not found: {project}"}, ensure_ascii=False)
+        if len(matches) > 1:
+            names = [m["name"] for m in matches]
+            return json.dumps({"error": f"Ambiguous project: {names}"}, ensure_ascii=False)
+        if method == "fuzzy":
+            return json.dumps({"error": f"Did you mean '{matches[0]['name']}'?"}, ensure_ascii=False)
+
+        project_name = matches[0]["name"]
+
+        # Password check
+        if not reg.has_password(project_name):
+            return json.dumps(
+                {
+                    "error": "Project has no password configured. "
+                    "Index management via MCP requires a project password. "
+                    "Set it: rlm_projects(action='update', name='...', password='...')"
+                },
+                ensure_ascii=False,
+            )
+
+        if not confirm or not reg.verify_password(project_name, confirm):
+            return json.dumps(
+                {
+                    "approval_required": True,
+                    "action": action,
+                    "project": project_name,
+                    "message": "Введите пароль проекта для подтверждения управления индексами. "
+                    "Ask the user for their project password. Do NOT proceed without it.",
+                },
+                ensure_ascii=False,
+            )
+
+        # Password correct — proceed with project (not path)
+
     return await anyio.to_thread.run_sync(
         lambda: _rlm_index(
             action=action,

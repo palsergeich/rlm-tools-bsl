@@ -4,6 +4,8 @@ import sys
 import tempfile
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 from rlm_tools_bsl.server import (
     _rlm_start,
     _rlm_execute,
@@ -12,6 +14,7 @@ from rlm_tools_bsl.server import (
     _rlm_projects,
     _rlm_index,
     _resolve_path_map,
+    rlm_index,
 )
 from rlm_tools_bsl.sandbox import HelperCall
 
@@ -1170,6 +1173,251 @@ def test_rlm_index_build_options():
 
             # cleanup
             _rlm_index(action="drop", path=src)
+
+
+# ---------------------------------------------------------------------------
+# rlm_index confirm flow tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rlm_index_build_requires_project_not_path():
+    """build with path (no project) → error."""
+    result = json.loads(await rlm_index(action="build", path="/some/path"))
+    assert "error" in result
+    assert "requires a registered project" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_rlm_index_build_path_and_project_rejected():
+    """build with path + project → error (path is forbidden for admin actions)."""
+    result = json.loads(await rlm_index(action="build", path="/some/path", project="Test"))
+    assert "error" in result
+    assert "requires a registered project" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_rlm_index_build_no_password_configured():
+    """Project without password → error with instruction to set password."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="NoPwd", path=src)
+            result = json.loads(await rlm_index(action="build", project="NoPwd"))
+            assert "error" in result
+            assert "no password configured" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_rlm_index_build_no_confirm():
+    """Project with password, no confirm → approval_required."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="WithPwd", path=src, password="secret")
+            result = json.loads(await rlm_index(action="build", project="WithPwd"))
+            assert result["approval_required"] is True
+            assert result["action"] == "build"
+            assert result["project"] == "WithPwd"
+            assert "message" in result
+
+
+@pytest.mark.asyncio
+async def test_rlm_index_build_wrong_confirm():
+    """Project with password, wrong confirm → approval_required (same form)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="WithPwd", path=src, password="secret")
+            result = json.loads(await rlm_index(action="build", project="WithPwd", confirm="wrong"))
+            assert result["approval_required"] is True
+
+
+@pytest.mark.asyncio
+async def test_rlm_index_build_correct_confirm():
+    """Project with password, correct confirm → build executes."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+        with open(os.path.join(src, "Module.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура Тест()\nКонецПроцедуры\n")
+
+        _reset_registry()
+        with patch.dict(
+            os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json"), "RLM_INDEX_DIR": idx_dir}
+        ):
+            _reset_registry()
+            _rlm_projects(action="add", name="WithPwd", path=src, password="secret")
+            r = json.loads(await rlm_index(action="build", project="WithPwd", confirm="secret"))
+            assert r["action"] == "build"
+            assert "db_path" in r
+            # cleanup
+            _rlm_index(action="drop", path=src)
+
+
+@pytest.mark.asyncio
+async def test_rlm_index_drop_correct_confirm():
+    """drop with correct password → executes."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+        with open(os.path.join(src, "Module.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура Тест()\nКонецПроцедуры\n")
+
+        _reset_registry()
+        with patch.dict(
+            os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json"), "RLM_INDEX_DIR": idx_dir}
+        ):
+            _reset_registry()
+            _rlm_projects(action="add", name="WithPwd", path=src, password="secret")
+            # Build first
+            await rlm_index(action="build", project="WithPwd", confirm="secret")
+            # Drop
+            r = json.loads(await rlm_index(action="drop", project="WithPwd", confirm="secret"))
+            assert r["action"] == "drop"
+
+
+@pytest.mark.asyncio
+async def test_rlm_index_update_correct_confirm():
+    """update with correct password → executes."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+        with open(os.path.join(src, "Module.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура Тест()\nКонецПроцедуры\n")
+
+        _reset_registry()
+        with patch.dict(
+            os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json"), "RLM_INDEX_DIR": idx_dir}
+        ):
+            _reset_registry()
+            _rlm_projects(action="add", name="WithPwd", path=src, password="secret")
+            # Build first
+            await rlm_index(action="build", project="WithPwd", confirm="secret")
+            # Update
+            r = json.loads(await rlm_index(action="update", project="WithPwd", confirm="secret"))
+            assert r["action"] == "update"
+            # cleanup
+            _rlm_index(action="drop", path=src)
+
+
+@pytest.mark.asyncio
+async def test_rlm_index_info_works_with_path():
+    """info via path without password → works as before."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        r = json.loads(await rlm_index(action="info", path=tmpdir))
+        assert "approval_required" not in r
+
+
+@pytest.mark.asyncio
+async def test_rlm_index_info_works_with_project():
+    """info via project without password → works as before."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="InfoTest", path=src)
+            r = json.loads(await rlm_index(action="info", project="InfoTest"))
+            assert "approval_required" not in r
+
+
+# --- _rlm_projects password tests (sync) ---
+
+
+def test_rlm_projects_add_with_password():
+    """add with password → response has no password_hash/password_salt."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            r = json.loads(_rlm_projects(action="add", name="PwdTest", path=src, password="secret"))
+            assert "added" in r
+            assert "password_hash" not in r["added"]
+            assert "password_salt" not in r["added"]
+
+
+def test_rlm_projects_list_no_password_fields():
+    """list never returns password fields."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="PwdTest", path=src, password="secret")
+            r = json.loads(_rlm_projects(action="list"))
+            for p in r["projects"]:
+                assert "password_hash" not in p
+                assert "password_salt" not in p
+
+
+def test_rlm_projects_update_password():
+    """update with password → response has no password_hash."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="PwdTest", path=src)
+            r = json.loads(_rlm_projects(action="update", name="PwdTest", password="newpass"))
+            assert "updated" in r
+            assert "password_hash" not in r["updated"]
+
+
+def test_rlm_projects_update_clear_password():
+    """update with clear_password → password removed."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry, get_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="PwdTest", path=src, password="secret")
+            reg = get_registry()
+            assert reg.has_password("PwdTest") is True
+            _rlm_projects(action="update", name="PwdTest", clear_password=True)
+            _reset_registry()
+            reg = get_registry()
+            assert reg.has_password("PwdTest") is False
 
 
 # ---------------------------------------------------------------------------

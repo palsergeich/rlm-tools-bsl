@@ -3,7 +3,7 @@
 [![CI](https://github.com/Dach-Coin/rlm-tools-bsl/actions/workflows/ci.yml/badge.svg)](https://github.com/Dach-Coin/rlm-tools-bsl/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/rlm-tools-bsl.svg)](https://pypi.org/project/rlm-tools-bsl/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![Coverage](https://img.shields.io/badge/coverage-78%25-yellow.svg)]()
+[![Coverage](https://img.shields.io/badge/coverage-79%25-yellow.svg)]()
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 MCP-сервер для токен-эффективного анализа кодовых баз 1С (BSL).
@@ -181,9 +181,11 @@ RLM не конкурирует с RAG. Это разные инструмент
 Вместо запоминания абсолютных путей к исходникам можно зарегистрировать проекты по именам:
 
 ```
-rlm_projects(action="add", name="My Config", path="/path/to/1c-sources")
+rlm_projects(action="add", name="My Config", path="/path/to/1c-sources", password="МойПароль")
 rlm_start(project="My Config", query="find module...")
 ```
+
+Для защиты индексов задайте пароль при регистрации проекта. Пароль потребуется при управлении индексами через mcp-tool `rlm_index(build/update/drop)` — модель запросит его у пользователя. Это требуется, чтобы ai-ассистент не выполнял индексирование без команды и подтверждения со стороны человека. CLI-интерфейс `rlm-bsl-index` не требует пароля.
 
 Реестр хранится в `projects.json` рядом с `service.json`. Подробнее -- **[docs/PROJECT_REGISTRY.md](docs/PROJECT_REGISTRY.md)**
 

@@ -2,9 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import os
 import threading
 from pathlib import Path
+
+
+def _make_salt() -> str:
+    return os.urandom(16).hex()
+
+
+def _hash_password(password: str, salt: str) -> str:
+    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+
+
+def _verify_password(password: str, salt: str, stored_hash: str) -> bool:
+    return hmac.compare_digest(
+        _hash_password(password, salt),
+        stored_hash,
+    )
 
 
 class RegistryCorruptedError(Exception):
@@ -92,15 +110,20 @@ class ProjectRegistry:
     def _normalize(name: str) -> str:
         return " ".join(name.split())
 
+    @staticmethod
+    def _sanitize_entry(entry: dict) -> dict:
+        """Return project entry without password fields."""
+        return {k: v for k, v in entry.items() if k not in ("password_salt", "password_hash")}
+
     # ------------------------------------------------------------------
     # CRUD
     # ------------------------------------------------------------------
 
     def list_projects(self) -> list[dict]:
         with self._lock:
-            return list(self._ensure_loaded())
+            return [self._sanitize_entry(p) for p in self._ensure_loaded()]
 
-    def add(self, name: str, path: str, description: str = "") -> dict:
+    def add(self, name: str, path: str, description: str = "", password: str | None = None) -> dict:
         with self._lock:
             projects = self._ensure_loaded()
             name = self._normalize(name)
@@ -110,14 +133,20 @@ class ProjectRegistry:
                 raise ValueError("Project path must not be empty")
             if not Path(path).is_dir():
                 raise ValueError(f"Directory does not exist: {path}")
+            if password is not None and not password:
+                raise ValueError("Password must not be empty — omit to skip")
             low = name.lower()
             for p in projects:
                 if p["name"].lower() == low:
                     raise ValueError(f"Project already exists: {p['name']}")
-            entry = {"name": name, "path": path, "description": description}
+            entry: dict = {"name": name, "path": path, "description": description}
+            if password:
+                salt = _make_salt()
+                entry["password_salt"] = salt
+                entry["password_hash"] = _hash_password(password, salt)
             projects.append(entry)
             self._save(projects)
-            return entry
+            return self._sanitize_entry(entry)
 
     def remove(self, name: str) -> dict:
         with self._lock:
@@ -128,7 +157,7 @@ class ProjectRegistry:
                 if p["name"].lower() == low:
                     removed = projects.pop(i)
                     self._save(projects)
-                    return removed
+                    return self._sanitize_entry(removed)
             raise KeyError(f"Project not found: {name}")
 
     def rename(self, old_name: str, new_name: str) -> dict:
@@ -150,17 +179,23 @@ class ProjectRegistry:
                 raise KeyError(f"Project not found: {old_name}")
             target["name"] = new_name
             self._save(projects)
-            return target
+            return self._sanitize_entry(target)
 
     def update(
         self,
         name: str,
         path: str | None = None,
         description: str | None = None,
+        password: str | None = None,
+        clear_password: bool = False,
     ) -> dict:
         with self._lock:
             projects = self._ensure_loaded()
             name = self._normalize(name)
+            if password is not None and clear_password:
+                raise ValueError("Cannot set password and clear_password at the same time")
+            if password is not None and not password:
+                raise ValueError("Password must not be empty — omit to skip")
             low = name.lower()
             target = None
             for p in projects:
@@ -175,8 +210,15 @@ class ProjectRegistry:
                 target["path"] = path
             if description is not None:
                 target["description"] = description
+            if password:
+                salt = _make_salt()
+                target["password_salt"] = salt
+                target["password_hash"] = _hash_password(password, salt)
+            elif clear_password:
+                target.pop("password_salt", None)
+                target.pop("password_hash", None)
             self._save(projects)
-            return target
+            return self._sanitize_entry(target)
 
     # ------------------------------------------------------------------
     # Resolve (three-level search)
@@ -199,10 +241,10 @@ class ProjectRegistry:
         # 1. Exact match (case-insensitive)
         for p in projects:
             if p["name"].lower() == query_low:
-                return ([p], "exact")
+                return ([self._sanitize_entry(p)], "exact")
 
         # 2. Substring match
-        substr_matches = [p for p in projects if query_low in p["name"].lower()]
+        substr_matches = [self._sanitize_entry(p) for p in projects if query_low in p["name"].lower()]
         if substr_matches:
             return (substr_matches, "substring")
 
@@ -217,9 +259,37 @@ class ProjectRegistry:
             if dist <= threshold:
                 fuzzy_matches.append(p)
         if fuzzy_matches:
-            return (fuzzy_matches, "fuzzy")
+            return ([self._sanitize_entry(m) for m in fuzzy_matches], "fuzzy")
 
         return ([], "none")
+
+    # ------------------------------------------------------------------
+    # Password
+    # ------------------------------------------------------------------
+
+    def has_password(self, name: str) -> bool:
+        """Check if project has a password configured."""
+        with self._lock:
+            projects = self._ensure_loaded()
+        low = self._normalize(name).lower()
+        for p in projects:
+            if p["name"].lower() == low:
+                return bool(p.get("password_hash") and p.get("password_salt"))
+        return False
+
+    def verify_password(self, name: str, password: str) -> bool:
+        """Verify project password. Returns False if project has no password."""
+        with self._lock:
+            projects = self._ensure_loaded()
+        low = self._normalize(name).lower()
+        for p in projects:
+            if p["name"].lower() == low:
+                stored_hash = p.get("password_hash")
+                salt = p.get("password_salt")
+                if not stored_hash or not salt:
+                    return False
+                return _verify_password(password, salt, stored_hash)
+        return False
 
     # ------------------------------------------------------------------
     # Helpers

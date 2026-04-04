@@ -153,10 +153,19 @@ def _load_env_file(path: str, env: dict) -> None:
                     continue
                 k, _, v = line.partition("=")
                 k = k.strip()
-                v = v.strip().strip('"').strip("'")
-                # Strip inline comments: VALUE # comment
-                if "#" in v and not v.startswith("#"):
-                    v = v[: v.index("#")].rstrip()
+                v = v.strip()
+                # Quoted value: extract content between quotes, ignore trailing comment
+                for q in ('"', "'"):
+                    if v.startswith(q):
+                        end = v.find(q, 1)
+                        if end > 0:
+                            v = v[1:end]
+                            break
+                else:
+                    # Unquoted: strip inline comment only when preceded by space (" #")
+                    idx = v.find(" #")
+                    if idx >= 0:
+                        v = v[:idx].rstrip()
                 env.setdefault(k, v)
     except OSError:
         pass
@@ -168,7 +177,7 @@ def _check_health(url: str) -> bool:
         with urllib.request.urlopen(url, timeout=10) as resp:
             return resp.status == 200
     except urllib.error.HTTPError:
-        return True
+        return False
     except Exception:
         return False
 

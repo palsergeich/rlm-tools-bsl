@@ -92,7 +92,10 @@ class _BuildLock:
                 os.close(self._fd)
                 self._fd = None
             _active_locks.pop(self._key, None)
-            self.lock_path.unlink(missing_ok=True)
+            try:
+                self.lock_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -721,10 +724,10 @@ check_index_freshness = check_index_strict
 # ---------------------------------------------------------------------------
 def _strip_code_line(line: str) -> str:
     """Remove comments and string literals from a BSL code line."""
+    line = _STRING_LITERAL_RE.sub("", line)
     ci = line.find("//")
     if ci >= 0:
         line = line[:ci]
-    line = _STRING_LITERAL_RE.sub("", line)
     return line
 
 

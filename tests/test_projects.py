@@ -416,3 +416,168 @@ def test_get_registry_default_path(tmp_path):
         from rlm_tools_bsl._config import SERVICE_JSON
 
         assert reg._path == SERVICE_JSON.parent / "projects.json"
+
+
+# ---------------------------------------------------------------------------
+# Password -- CRUD + sanitize
+# ---------------------------------------------------------------------------
+
+
+def test_add_with_password_stores_hash_not_plaintext(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    entry = reg.add("Alpha", str(d), password="secret123")
+    # Returned entry must NOT contain password fields
+    assert "password_hash" not in entry
+    assert "password_salt" not in entry
+    # But raw file must contain them
+    raw = json.loads((tmp_path / "projects.json").read_text(encoding="utf-8"))
+    stored = raw["projects"][0]
+    assert "password_hash" in stored
+    assert "password_salt" in stored
+    assert stored["password_hash"] != "secret123"  # not plaintext
+
+
+def test_add_without_password_no_hash_fields(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d))
+    raw = json.loads((tmp_path / "projects.json").read_text(encoding="utf-8"))
+    stored = raw["projects"][0]
+    assert "password_hash" not in stored
+    assert "password_salt" not in stored
+
+
+def test_add_empty_password_raises(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    with pytest.raises(ValueError, match="must not be empty"):
+        reg.add("Alpha", str(d), password="")
+
+
+def test_update_password(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d))
+    updated = reg.update("Alpha", password="newpass")
+    assert "password_hash" not in updated
+    assert reg.has_password("Alpha") is True
+    assert reg.verify_password("Alpha", "newpass") is True
+
+
+def test_update_clear_password(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d), password="secret")
+    assert reg.has_password("Alpha") is True
+    reg.update("Alpha", clear_password=True)
+    assert reg.has_password("Alpha") is False
+
+
+def test_update_password_and_clear_raises(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d))
+    with pytest.raises(ValueError, match="Cannot set password and clear_password"):
+        reg.update("Alpha", password="x", clear_password=True)
+
+
+def test_verify_password_correct(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d), password="mypass")
+    assert reg.verify_password("Alpha", "mypass") is True
+
+
+def test_verify_password_wrong(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d), password="mypass")
+    assert reg.verify_password("Alpha", "wrong") is False
+
+
+def test_verify_password_no_hash_returns_false(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d))
+    assert reg.verify_password("Alpha", "anything") is False
+
+
+def test_has_password_true_false(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d), password="secret")
+    reg.add("Beta", str(d))
+    assert reg.has_password("Alpha") is True
+    assert reg.has_password("Beta") is False
+
+
+def test_list_projects_no_password_fields(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d), password="secret")
+    projects = reg.list_projects()
+    for p in projects:
+        assert "password_hash" not in p
+        assert "password_salt" not in p
+
+
+def test_add_response_no_password_fields(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    entry = reg.add("Alpha", str(d), password="secret")
+    assert "password_hash" not in entry
+    assert "password_salt" not in entry
+
+
+def test_update_response_no_password_fields(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d))
+    entry = reg.update("Alpha", password="secret")
+    assert "password_hash" not in entry
+    assert "password_salt" not in entry
+
+
+def test_remove_response_no_password_fields(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d), password="secret")
+    entry = reg.remove("Alpha")
+    assert "password_hash" not in entry
+    assert "password_salt" not in entry
+
+
+def test_rename_response_no_password_fields(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d), password="secret")
+    entry = reg.rename("Alpha", "Beta")
+    assert "password_hash" not in entry
+    assert "password_salt" not in entry
+
+
+def test_resolve_no_password_fields(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d), password="secret")
+    matches, _ = reg.resolve("Alpha")
+    for m in matches:
+        assert "password_hash" not in m
+        assert "password_salt" not in m
