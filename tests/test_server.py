@@ -15,6 +15,7 @@ from rlm_tools_bsl.server import (
     _rlm_index,
     _resolve_path_map,
     rlm_index,
+    rlm_projects,
 )
 from rlm_tools_bsl.sandbox import HelperCall
 
@@ -1209,8 +1210,8 @@ async def test_rlm_index_build_no_password_configured():
             _reset_registry()
             _rlm_projects(action="add", name="NoPwd", path=src)
             result = json.loads(await rlm_index(action="build", project="NoPwd"))
-            assert "error" in result
-            assert "no password configured" in result["error"]
+            assert result["approval_required"] is True
+            assert result["action"] == "set_password"
 
 
 @pytest.mark.asyncio
@@ -1418,6 +1419,625 @@ def test_rlm_projects_update_clear_password():
             _reset_registry()
             reg = get_registry()
             assert reg.has_password("PwdTest") is False
+
+
+# ---------------------------------------------------------------------------
+# MCP rlm_projects password enforcement tests (async)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mcp_add_with_password():
+    """add with password → ok, response has has_password: true."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            r = json.loads(await rlm_projects(action="add", name="Test", path=src, password="secret"))
+            assert "added" in r
+            assert r["added"]["has_password"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_remove_correct_password():
+    """remove with correct password → ok."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="remove", name="Test", password="secret"))
+            assert "removed" in r
+            assert r["removed"]["has_password"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_correct_password():
+    """update (change description) with correct password → ok."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="update", name="Test", description="Updated", password="secret"))
+            assert "updated" in r
+            assert r["updated"]["description"] == "Updated"
+
+
+@pytest.mark.asyncio
+async def test_mcp_rename_correct_password():
+    """rename with correct password → ok."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="rename", name="Test", new_name="Test2", password="secret"))
+            assert "renamed" in r
+            assert r["renamed"]["name"] == "Test2"
+
+
+@pytest.mark.asyncio
+async def test_mcp_add_no_password_approval_required():
+    """add without password → approval_required with name+path+description."""
+    r = json.loads(await rlm_projects(action="add", name="X", path="/some/path", description="Desc"))
+    assert r["approval_required"] is True
+    assert r["action"] == "add"
+    assert r["name"] == "X"
+    assert r["path"] == "/some/path"
+    assert r["description"] == "Desc"
+
+
+@pytest.mark.asyncio
+async def test_mcp_add_empty_password_approval_required():
+    """add with password='' → approval_required."""
+    r = json.loads(await rlm_projects(action="add", name="X", path="/some/path", password=""))
+    assert r["approval_required"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_add_no_name_error():
+    """add without name → error (before password check)."""
+    r = json.loads(await rlm_projects(action="add"))
+    assert "error" in r
+    assert "name is required" in r["error"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_add_no_path_error():
+    """add without path → error (before password check)."""
+    r = json.loads(await rlm_projects(action="add", name="X"))
+    assert "error" in r
+    assert "path is required" in r["error"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_remove_no_password():
+    """remove without password → approval_required."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="remove", name="Test"))
+            assert r["approval_required"] is True
+            assert r["action"] == "remove"
+            assert r["project"] == "Test"
+
+
+@pytest.mark.asyncio
+async def test_mcp_remove_wrong_password():
+    """remove with wrong password → approval_required."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="remove", name="Test", password="wrong"))
+            assert r["approval_required"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_no_password():
+    """update without password → approval_required with path/description."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="update", name="Test", description="New desc"))
+            assert r["approval_required"] is True
+            assert r["action"] == "update"
+            assert r["project"] == "Test"
+            assert r["description"] == "New desc"
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_no_password_clear_password_in_payload():
+    """update with clear_password but no password → approval_required includes clear_password."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="update", name="Test", clear_password=True))
+            assert r["approval_required"] is True
+            assert r["clear_password"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_rename_no_password():
+    """rename without password → approval_required with new_name."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="rename", name="Test", new_name="Test2"))
+            assert r["approval_required"] is True
+            assert r["new_name"] == "Test2"
+
+
+@pytest.mark.asyncio
+async def test_mcp_rename_no_new_name_error():
+    """rename without new_name → error (before auth)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="rename", name="Test"))
+            assert "error" in r
+            assert "new_name is required" in r["error"]
+
+
+# --- Legacy migration ---
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_legacy_set_password():
+    """legacy project + update(password='X') → sets initial password (bootstrap)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry, get_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Legacy", path=src)
+            r = json.loads(await rlm_projects(action="update", name="Legacy", password="newpwd"))
+            assert "updated" in r
+            assert r["updated"]["has_password"] is True
+            _reset_registry()
+            reg = get_registry()
+            assert reg.verify_password("Legacy", "newpwd") is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_remove_no_name_error():
+    """remove without name → error."""
+    r = json.loads(await rlm_projects(action="remove"))
+    assert "error" in r
+    assert "name is required" in r["error"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_no_name_error():
+    """update without name → error."""
+    r = json.loads(await rlm_projects(action="update"))
+    assert "error" in r
+    assert "name is required" in r["error"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_clear_password_on_legacy_project():
+    """clear_password on legacy project (no password) → approval_required to set password."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Legacy", path=src)
+            r = json.loads(await rlm_projects(action="update", name="Legacy", clear_password=True))
+            assert r["approval_required"] is True
+            assert r["action"] == "set_password"
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_legacy_password_with_path_rejected():
+    """legacy + update(password='X', path='...') → approval_required (set password first)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Legacy", path=src)
+            r = json.loads(await rlm_projects(action="update", name="Legacy", password="X", path="/new"))
+            assert r["approval_required"] is True
+            assert r["action"] == "set_password"
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_legacy_password_with_description_rejected():
+    """legacy + update(password='X', description='...') → approval_required."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Legacy", path=src)
+            r = json.loads(await rlm_projects(action="update", name="Legacy", password="X", description="Desc"))
+            assert r["approval_required"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_legacy_no_password_approval():
+    """legacy + update without password → approval_required to set password."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Legacy", path=src)
+            r = json.loads(await rlm_projects(action="update", name="Legacy", description="Desc"))
+            assert r["approval_required"] is True
+            assert r["action"] == "set_password"
+
+
+@pytest.mark.asyncio
+async def test_mcp_remove_legacy_no_password_approval():
+    """remove on legacy project → approval_required to set password."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Legacy", path=src)
+            r = json.loads(await rlm_projects(action="remove", name="Legacy"))
+            assert r["approval_required"] is True
+            assert r["action"] == "set_password"
+
+
+# --- Resolve contract (structured payloads) ---
+
+
+@pytest.mark.asyncio
+async def test_mcp_remove_substring_resolve():
+    """remove('Dev') with project 'DevERP' → resolve via substring + password check + ok."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="DevERP", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="remove", name="Dev", password="secret"))
+            assert "removed" in r
+            assert r["removed"]["name"] == "DevERP"
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_ambiguous_error():
+    """ambiguous substring → error with matches array."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Config Alpha", path=src, password="secret")
+            _rlm_projects(action="add", name="Config Beta", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="update", name="Config", password="secret"))
+            assert "error" in r
+            assert "Ambiguous" in r["error"]
+            assert "matches" in r
+            assert len(r["matches"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_mcp_remove_fuzzy_suggestion():
+    """fuzzy match → 'Did you mean ...'."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Alpha", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="remove", name="Alphb", password="secret"))
+            assert "error" in r
+            assert "Did you mean" in r["error"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_remove_not_found_error():
+    """not found → error with available_projects."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Alpha", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="remove", name="Ghost"))
+            assert "error" in r
+            assert "not found" in r["error"].lower()
+            assert "available_projects" in r
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_corrupted_registry():
+    """RegistryCorruptedError → structured error."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        cfg_file = os.path.join(tmpdir, "service.json")
+        proj_file = os.path.join(tmpdir, "projects.json")
+        with open(proj_file, "w", encoding="utf-8") as f:
+            f.write("NOT JSON")
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": cfg_file}):
+            _reset_registry()
+            r = json.loads(await rlm_projects(action="remove", name="X"))
+            assert "error" in r
+            assert "corrupted" in r["error"].lower()
+
+
+# --- clear_password ---
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_wrong_password_only_gives_error():
+    """update with wrong password and no other fields → error with instructions (not approval_required)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="current")
+            r = json.loads(await rlm_projects(action="update", name="Test", password="wrong"))
+            assert "error" in r
+            assert "approval_required" not in r
+            assert "wrong password" in r["error"].lower() or "неверный" in r["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_change_password_two_steps():
+    """Change password: clear_password with old, then set new password on legacy project."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry, get_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="old")
+            # Step 1: clear password
+            r1 = json.loads(await rlm_projects(action="update", name="Test", clear_password=True, password="old"))
+            assert "updated" in r1
+            assert r1["updated"]["has_password"] is False
+            # Step 2: set new password (project is now legacy)
+            r2 = json.loads(await rlm_projects(action="update", name="Test", password="new"))
+            assert "updated" in r2
+            assert r2["updated"]["has_password"] is True
+            _reset_registry()
+            reg = get_registry()
+            assert reg.verify_password("Test", "new") is True
+            assert reg.verify_password("Test", "old") is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_clear_password_requires_password():
+    """clear_password + correct password → ok, has_password: false."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="update", name="Test", clear_password=True, password="secret"))
+            assert "updated" in r
+            assert r["updated"]["has_password"] is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_clear_then_remove_blocked():
+    """clear password → remove → error 'set password'."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            # Clear password
+            await rlm_projects(action="update", name="Test", clear_password=True, password="secret")
+            # Try remove — should require password setup
+            r = json.loads(await rlm_projects(action="remove", name="Test"))
+            assert r["approval_required"] is True
+            assert r["action"] == "set_password"
+
+
+@pytest.mark.asyncio
+async def test_mcp_clear_then_index_blocked():
+    """clear password → rlm_index build → error 'no password'."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            # Clear password
+            await rlm_projects(action="update", name="Test", clear_password=True, password="secret")
+            # Try index build — should require password setup
+            r = json.loads(await rlm_index(action="build", project="Test"))
+            assert r["approval_required"] is True
+            assert r["action"] == "set_password"
+
+
+# --- has_password flag in MCP responses ---
+
+
+@pytest.mark.asyncio
+async def test_mcp_list_has_password_flag():
+    """list → has_password: true/false for each project."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="WithPwd", path=src, password="secret")
+            _rlm_projects(action="add", name="NoPwd", path=src)
+            r = json.loads(await rlm_projects(action="list"))
+            by_name = {p["name"]: p for p in r["projects"]}
+            assert by_name["WithPwd"]["has_password"] is True
+            assert by_name["NoPwd"]["has_password"] is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_add_response_has_password_true():
+    """add response → has_password: true."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            r = json.loads(await rlm_projects(action="add", name="Test", path=src, password="secret"))
+            assert r["added"]["has_password"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_remove_response_has_password():
+    """remove response → has_password: true."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="remove", name="Test", password="secret"))
+            assert r["removed"]["has_password"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_clear_response_has_password_false():
+    """update clear_password → has_password: false."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="update", name="Test", clear_password=True, password="secret"))
+            assert r["updated"]["has_password"] is False
+
+
+# --- Unaffected ---
+
+
+@pytest.mark.asyncio
+async def test_mcp_list_no_auth():
+    """list without password → ok."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+        _reset_registry()
+        with patch.dict(os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json")}):
+            _reset_registry()
+            _rlm_projects(action="add", name="Test", path=src, password="secret")
+            r = json.loads(await rlm_projects(action="list"))
+            assert "projects" in r
+            assert "approval_required" not in r
 
 
 # ---------------------------------------------------------------------------

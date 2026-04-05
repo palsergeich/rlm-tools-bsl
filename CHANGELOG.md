@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.7.3] — 2026-04-05
+
+### ⚠ Breaking changes
+- **`rlm_projects(action="add")`: `password` обязателен через MCP** — вызов без `password` возвращает `approval_required` вместо успешной регистрации. CLI и sync-функция `_rlm_projects()` не затронуты
+- **`rlm_projects(action="remove/update/rename")`: `password` обязателен** — текущий пароль проекта для подтверждения. Без него операция возвращает `approval_required`
+- **Семантика `password` в `update` изменена** — для защищённых проектов `password` = текущий пароль (auth). Смена пароля в два шага: `clear_password` с текущим паролем, затем `update(password="новый")` на legacy-проекте
+
+### Добавлено
+- **Пароль для всех мутирующих MCP-операций с проектами** — единый параметр `password` для add/remove/update/rename; сервер возвращает `approval_required` с non-secret полями исходного запроса (retry требует оригинальный запрос клиента)
+- **Флаг `has_password`** — CRUD-ответы `rlm_projects` (list/add/remove/rename/update) содержат `has_password: true/false` для каждого проекта
+- **Structured resolve errors** — `rlm_projects` wrapper возвращает `available_projects` при not found, `matches` при ambiguous, `"Did you mean '...'"` при fuzzy
+- **Legacy-миграция** — проекты без пароля могут установить его через `update(name, password=...)`; остальные мутации заблокированы до установки пароля
+- **Логирование** — `rlm_projects` и `rlm_index` логируют action/name/project (пароль маскируется `***`)
+- 37 новых async-тестов MCP password enforcement, 7 тестов `has_password` в sanitized output
+
+### Улучшено
+- **`rlm_index(path=...)` для слабых моделей** — развёрнутое сообщение об ошибке: «проект не зарегистрирован, сначала спросите пользователя, регистрировать ли его»
+- **`rlm_index` без пароля** — вместо `error` возвращает `approval_required: set_password` (единый формат с `rlm_projects`)
+
 ## [1.7.2] — 2026-04-04
 
 ### Исправлено

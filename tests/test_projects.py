@@ -581,3 +581,70 @@ def test_resolve_no_password_fields(tmp_path):
     for m in matches:
         assert "password_hash" not in m
         assert "password_salt" not in m
+
+
+# --- has_password flag in sanitized output ---
+
+
+def test_sanitize_has_password_true(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    entry = reg.add("Alpha", str(d), password="secret")
+    assert entry["has_password"] is True
+
+
+def test_sanitize_has_password_false(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    entry = reg.add("Alpha", str(d))
+    assert entry["has_password"] is False
+
+
+def test_list_has_password_flag(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("WithPwd", str(d), password="secret")
+    reg.add("NoPwd", str(d))
+    projects = reg.list_projects()
+    by_name = {p["name"]: p for p in projects}
+    assert by_name["WithPwd"]["has_password"] is True
+    assert by_name["NoPwd"]["has_password"] is False
+
+
+def test_remove_response_has_password(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d), password="secret")
+    entry = reg.remove("Alpha")
+    assert entry["has_password"] is True
+
+
+def test_update_clear_response_has_password_false(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d), password="secret")
+    entry = reg.update("Alpha", clear_password=True)
+    assert entry["has_password"] is False
+
+
+def test_rename_response_has_password(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d), password="secret")
+    entry = reg.rename("Alpha", "Beta")
+    assert entry["has_password"] is True
+
+
+def test_resolve_has_password_flag(tmp_path):
+    reg = ProjectRegistry(tmp_path / "projects.json")
+    d = tmp_path / "src"
+    d.mkdir()
+    reg.add("Alpha", str(d), password="secret")
+    matches, _ = reg.resolve("Alpha")
+    assert matches[0]["has_password"] is True

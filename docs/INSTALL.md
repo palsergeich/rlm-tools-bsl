@@ -162,7 +162,7 @@ environment:
 Зарегистрируйте проекты через MCP-хелпер из AI-клиента:
 
 ```
-rlm_projects(action="add", name="ERP", path="D:/Repos/1c/erp/src/cf")
+rlm_projects(action="add", name="ERP", path="D:/Repos/1c/erp/src/cf", password="...")
 ```
 
 > При наличии `RLM_PATH_MAP` путь `D:/Repos/1c/erp/src/cf` автоматически

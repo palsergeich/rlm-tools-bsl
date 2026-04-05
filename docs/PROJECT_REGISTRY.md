@@ -13,8 +13,10 @@ rlm_projects(action="list")
 ### 2. Зарегистрировать проект
 
 ```
-rlm_projects(action="add", name="My Config", path="/path/to/1c-sources", description="Production config")
+rlm_projects(action="add", name="My Config", path="/path/to/1c-sources", description="Production config", password="...")
 ```
+
+Пароль обязателен. Без него сервер вернёт `approval_required` — AI-модель должна запросить пароль у пользователя.
 
 ### 3. Открыть сессию по имени
 
@@ -27,10 +29,20 @@ rlm_start(project="My Config", query="find all exported procedures")
 | Действие | Параметры                                   | Пример                                                              |
 | -------- | ------------------------------------------- | ------------------------------------------------------------------- |
 | `list`   | --                                          | `rlm_projects(action="list")`                                       |
-| `add`    | `name`, `path`, `description` (опц.), `password` (опц.) | `rlm_projects(action="add", name="Dev", path="/data/dev-config", password="...")` |
-| `remove` | `name`                                      | `rlm_projects(action="remove", name="Dev")`                         |
-| `rename` | `name`, `new_name`                          | `rlm_projects(action="rename", name="Dev", new_name="Development")` |
-| `update` | `name`, `path` (опц.), `description` (опц.), `password` (опц.), `clear_password` (опц.) | `rlm_projects(action="update", name="Dev", password="new")` |
+| `add`    | `name`, `path`, `password`, `description` (опц.) | `rlm_projects(action="add", name="Dev", path="/data/dev-config", password="...")` |
+| `remove` | `name`, `password`                          | `rlm_projects(action="remove", name="Dev", password="...")`          |
+| `rename` | `name`, `new_name`, `password`              | `rlm_projects(action="rename", name="Dev", new_name="Development", password="...")` |
+| `update` | `name`, `password`, `path` (опц.), `description` (опц.), `clear_password` (опц.) | `rlm_projects(action="update", name="Dev", description="New desc", password="...")` |
+
+**Параметр `password`:**
+
+| Действие | Семантика `password` |
+|----------|---------------------|
+| `add` | Устанавливает начальный пароль (обязателен) |
+| `remove`, `rename`, `update` | Текущий пароль для подтверждения операции |
+| `update` на проекте без пароля | Устанавливает пароль (bootstrap) |
+
+Смена пароля — в два шага: `clear_password` с текущим паролем, затем `update(password="новый")`.
 
 ## Использование в rlm_start и rlm_index
 
@@ -57,21 +69,39 @@ rlm_index(action="info", project="My Config")
 
 При неоднозначном совпадении (несколько проектов подходят) сессия не создаётся -- возвращается список вариантов.
 
-### Пароль проекта для управления индексами
+### Пароль проекта
 
-При регистрации проекта можно (и рекомендуется) задать пароль:
+Пароль обязателен при регистрации проекта (`add`) и для всех мутирующих операций (`remove`, `update`, `rename`) через MCP:
 
 ```
 rlm_projects(action="add", name="ERP", path="D:\\Bases\\ERP", password="МойПароль")
 ```
 
-Пароль хранится как SHA-256 hash + salt в `projects.json`. Без пароля управление индексами (build/update/drop) через MCP заблокировано.
+Пароль хранится как SHA-256 hash + salt в `projects.json`.
 
-Управление паролем:
-- Установить/сменить: `rlm_projects(action="update", name="ERP", password="МойПароль")`
-- Удалить (заблокировать MCP-индексацию): `rlm_projects(action="update", name="ERP", clear_password=true)`
+**Мутирующие операции** (remove/update/rename) требуют параметр `password` с текущим паролем:
 
-**Зачем нужен пароль проекта?** Слабые AI-модели при обнаружении отсутствующего индекса самостоятельно запускают построение без согласия пользователя. Построение занимает 5-10 минут и блокирует I/O сервера. Пароль гарантирует, что только человек принимает решение об управлении индексами — модель не знает пароль и не может обойти проверку. CLI-интерфейс `rlm-bsl-index` не требует пароля.
+```
+rlm_projects(action="remove", name="ERP", password="МойПароль")
+rlm_projects(action="update", name="ERP", description="Новое описание", password="МойПароль")
+rlm_projects(action="rename", name="ERP", new_name="ERP 2.5", password="МойПароль")
+```
+
+Без `password` сервер возвращает `approval_required` — AI-модель должна запросить пароль у пользователя.
+
+**Управление паролем:**
+- Сменить (два шага):
+  1. `rlm_projects(action="update", name="ERP", password="СтарыйПароль", clear_password=true)`
+  2. `rlm_projects(action="update", name="ERP", password="НовыйПароль")`
+- Удалить: `rlm_projects(action="update", name="ERP", password="МойПароль", clear_password=true)`
+
+После удаления пароля все MCP-мутации заблокированы до установки нового.
+
+**Legacy-проекты** (зарегистрированные без пароля): для установки пароля вызовите `rlm_projects(action="update", name="...", password="...")`. Остальные мутации заблокированы до установки пароля.
+
+**Флаг `has_password`**: CRUD-ответы `rlm_projects` (list, add, remove, rename, update) содержат поле `has_password: true/false` для каждого проекта. Это позволяет визуально контролировать, какие проекты защищены.
+
+**Зачем нужен пароль проекта?** Слабые AI-модели могут самостоятельно добавлять, удалять или модифицировать проекты без ведома пользователя. Пароль создаёт точку взаимодействия, где модель запрашивает подтверждение у человека. CLI-интерфейс `rlm-bsl-index` не требует пароля.
 
 ### Подсказка о регистрации
 

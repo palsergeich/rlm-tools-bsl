@@ -905,18 +905,160 @@ async def rlm_projects(
     new_name: Annotated[str | None, Field(description="New name for rename action")] = None,
     password: Annotated[
         str | None,
-        Field(description="Project password for index management. Required for build/update/drop via rlm_index."),
+        Field(
+            description="Project password. For 'add': sets the initial password (required). "
+            "For 'remove/rename/update': current password for confirmation. "
+            "Ask the user for their project password when server returns approval_required."
+        ),
     ] = None,
     clear_password: Annotated[
-        bool, Field(description="Remove project password (disables index management via MCP)")
+        bool, Field(description="Remove project password (disables all MCP mutations until new password is set)")
     ] = False,
 ) -> str:
     """Manage the server-side project registry -- a mapping of human-readable project names to filesystem paths.
-    Use 'list' to see all registered 1C projects, 'add' to register a new project (name + path + optional description),
+    Use 'list' to see all registered 1C projects, 'add' to register a new project (name + path + password),
     'remove' to unregister, 'rename' to change a project's display name, 'update' to change path or description.
     After registering a project, you can open sessions via rlm_start(project='name') instead of specifying the full path.
     When the user mentions a project by name, call list first to find available projects.
-    Set password when adding/updating to enable index management (build/update/drop) via rlm_index."""
+    Password is required for all mutating operations. For 'add' it sets the initial password.
+    For 'remove/rename/update' it confirms the operation with the current password."""
+
+    # === MCP password enforcement ===
+
+    logger.info(
+        "rlm_projects: action=%s name=%s password=%s clear_password=%s",
+        action,
+        name,
+        "***" if password else None,
+        clear_password,
+    )
+
+    if action == "add":
+        if not name:
+            return json.dumps({"error": "name is required for 'add'"}, ensure_ascii=False)
+        if not path:
+            return json.dumps({"error": "path is required for 'add'"}, ensure_ascii=False)
+        if not password:
+            payload: dict = {
+                "approval_required": True,
+                "action": "add",
+                "name": name,
+                "path": path,
+                "message": "Для регистрации проекта необходим пароль. "
+                "Ask the user for a project password. "
+                "Do NOT invent the password yourself.",
+            }
+            if description is not None:
+                payload["description"] = description
+            return json.dumps(payload, ensure_ascii=False)
+        # password provided → fall through to _rlm_projects
+
+    if action in ("remove", "update", "rename"):
+        if not name:
+            return json.dumps({"error": f"name is required for '{action}'"}, ensure_ascii=False)
+        if action == "rename" and not new_name:
+            return json.dumps({"error": "new_name is required for 'rename'"}, ensure_ascii=False)
+
+        from rlm_tools_bsl.projects import RegistryCorruptedError, get_registry
+
+        try:
+            reg = get_registry()
+            matches, method = reg.resolve(name)
+        except RegistryCorruptedError as exc:
+            return json.dumps(
+                {"error": f"Registry file is corrupted: {exc}. Run rlm_projects(action='list') after fixing the file."},
+                ensure_ascii=False,
+            )
+
+        if not matches:
+            all_projects = reg.list_projects()
+            available = [{"name": p["name"], "description": p.get("description", "")} for p in all_projects]
+            return json.dumps(
+                {"error": f"Project not found: {name}", "available_projects": available},
+                ensure_ascii=False,
+            )
+        if len(matches) > 1:
+            ambiguous = [{"name": m["name"], "description": m.get("description", "")} for m in matches]
+            return json.dumps(
+                {"error": f"Ambiguous project name: {name}", "matches": ambiguous},
+                ensure_ascii=False,
+            )
+        if method == "fuzzy":
+            return json.dumps(
+                {"error": f"Did you mean '{matches[0]['name']}'?"},
+                ensure_ascii=False,
+            )
+
+        # Exact or unique substring → single match
+        project_name = matches[0]["name"]
+        name = project_name  # override for exact-match CRUD in _rlm_projects
+        has_pwd = reg.has_password(project_name)
+
+        # --- Password enforcement ---
+        # By design: legacy projects (no password) get a single generic
+        # "set_password" response for ALL mutations except password-only
+        # bootstrap.  This covers retargeting too: update(password="X",
+        # path="/evil") on a legacy project hits the else-branch and
+        # returns approval_required instead of silently applying the
+        # path change.  A separate "set password first, then update"
+        # error was considered (plan R4-1) but dropped — real-world
+        # testing showed models correctly interpret "set_password" and
+        # do the bootstrap in a separate call.
+        if not has_pwd:
+            if action == "update" and password and path is None and description is None and not clear_password:
+                # Legacy bootstrap: password-only update sets initial password
+                # Fall through to _rlm_projects
+                pass
+            else:
+                return json.dumps(
+                    {
+                        "approval_required": True,
+                        "action": "set_password",
+                        "project": project_name,
+                        "message": "У проекта не задан пароль. "
+                        "Project has no password configured. "
+                        "Ask the user what password to set for this project. "
+                        "Do NOT invent or guess the password.",
+                    },
+                    ensure_ascii=False,
+                )
+        elif not password or not reg.verify_password(project_name, password):
+            # Reaches here only when has_pwd=True (blocks above handle has_pwd=False)
+            # Detect password change attempt: wrong password + no other mutations
+            if action == "update" and password and path is None and description is None and not clear_password:
+                return json.dumps(
+                    {
+                        "error": "Неверный пароль. Запросите у пользователя правильный текущий пароль проекта. "
+                        "Wrong password. Ask the user for the correct CURRENT project password. "
+                        "Do NOT guess or reuse passwords from other projects."
+                    },
+                    ensure_ascii=False,
+                )
+            # Build approval_required payload with all non-secret params
+            payload = {
+                "approval_required": True,
+                "action": action,
+                "project": project_name,
+                "message": "Введите текущий пароль проекта для подтверждения. "
+                "Ask the user for their CURRENT project password. "
+                "Do NOT invent the password yourself.",
+            }
+            if action == "rename" and new_name:
+                payload["new_name"] = new_name
+            if action == "update":
+                if path is not None:
+                    payload["path"] = path
+                if description is not None:
+                    payload["description"] = description
+                if clear_password:
+                    payload["clear_password"] = True
+            return json.dumps(payload, ensure_ascii=False)
+        else:
+            # Password verified → consumed for auth, not passed to _rlm_projects
+            password = None
+
+        # Fall through to _rlm_projects
+
     return await anyio.to_thread.run_sync(
         lambda: _rlm_projects(
             action=action,
@@ -1024,6 +1166,14 @@ async def rlm_index(
     Provide either 'path' (filesystem path) or 'project' (registered project name).
     'build', 'update' and 'drop' require a registered project with password —
     ask the user for the project password."""
+    logger.info(
+        "rlm_index: action=%s project=%s path=%s confirm=%s",
+        action,
+        project,
+        path,
+        "***" if confirm else None,
+    )
+
     if action in ("build", "update", "drop"):
         from rlm_tools_bsl.projects import RegistryCorruptedError, get_registry
 
@@ -1031,9 +1181,13 @@ async def rlm_index(
         if path is not None:
             return json.dumps(
                 {
-                    "error": f"Action '{action}' requires a registered project with password. "
-                    "Use project=... instead of path=... "
-                    "Register the project first: rlm_projects(action='add', name='...', path='...', password='...')"
+                    "error": f"STOP! Path '{path}' is NOT a registered project! "
+                    f"Action '{action}' requires a registered project with password. "
+                    "You MUST register the project first! "
+                    "Tell the user: this path is not in the project list and needs to be registered. "
+                    "Ask: 'Этого проекта нет в списке. Зарегистрировать его?' "
+                    "Then use: rlm_projects(action='add', name='...', path='...', password='...'). "
+                    "Do NOT ask for a password yet — first confirm with the user!"
                 },
                 ensure_ascii=False,
             )
@@ -1067,9 +1221,13 @@ async def rlm_index(
         if not reg.has_password(project_name):
             return json.dumps(
                 {
-                    "error": "Project has no password configured. "
-                    "Index management via MCP requires a project password. "
-                    "Set it: rlm_projects(action='update', name='...', password='...')"
+                    "approval_required": True,
+                    "action": "set_password",
+                    "project": project_name,
+                    "message": "У проекта не задан пароль. "
+                    "Project has no password configured. "
+                    "Ask the user what password to set for this project. "
+                    "Do NOT invent or guess the password.",
                 },
                 ensure_ascii=False,
             )

@@ -113,7 +113,9 @@ class ProjectRegistry:
     @staticmethod
     def _sanitize_entry(entry: dict) -> dict:
         """Return project entry without password fields."""
-        return {k: v for k, v in entry.items() if k not in ("password_salt", "password_hash")}
+        result = {k: v for k, v in entry.items() if k not in ("password_salt", "password_hash")}
+        result["has_password"] = bool(entry.get("password_hash") and entry.get("password_salt"))
+        return result
 
     # ------------------------------------------------------------------
     # CRUD
