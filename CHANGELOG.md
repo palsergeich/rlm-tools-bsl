@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.7.4] — 2026-04-05
+
+### Изменено
+- **⚠️ MCP response shape change:** `rlm_index(build/update)` через MCP теперь возвращает `{"started": true, ...}` вместо финального результата. Построение выполняется в фоне, статус — через `rlm_index(action='info')`. CLI `rlm-bsl-index` не затронут
+
+### Добавлено
+- **Фоновое построение/обновление индексов** — `rlm_index(build/update)` запускается в фоне и сразу возвращает `{"started": true}`. Статус доступен через `rlm_index(action='info')` — поля `build_status`, `build_elapsed`, `build_result`/`build_error`
+- **Защита от повторного запуска** — повторный build/update на тот же проект возвращает ошибку "already in progress" с elapsed time
+- **Защита drop через MCP** — нельзя удалить индекс через MCP пока идёт построение
+- **Защита info при build** — во время build `info` возвращает `build_status: "building"` без чтения полусобранной БД
+
 ## [1.7.3] — 2026-04-05
 
 ### ⚠ Breaking changes

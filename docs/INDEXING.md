@@ -91,6 +91,27 @@ rlm_projects(action="add", name="ERP", path="D:\\Bases\\ERP", password="...")
 
 При запуске `build` или `update` сервер захватывает эксклюзивную файловую блокировку (`bsl_index.lock` рядом с БД). Если другой процесс уже строит индекс для этого же пути — возвращается ошибка `RuntimeError` вместо повреждения БД. Блокировка реентрантна в рамках одного процесса (последовательные `build` + `update`), использует OS-level locking (`msvcrt.locking` на Windows, `fcntl.flock` на Linux) и автоматически освобождается при аварийном завершении процесса.
 
+### Фоновое построение
+
+При вызове через MCP построение и обновление индексов выполняется в фоне:
+
+```
+rlm_index(action="build", project="ERP", confirm="пароль")
+→ {"started": true, "action": "build", "project": "ERP", "message": "..."}
+```
+
+Проверка статуса:
+```
+rlm_index(action="info", project="ERP")
+→ {..., "build_status": "building", "build_elapsed": 45.2}
+→ {..., "build_status": "done", "build_result": {...}}
+→ {..., "build_status": "error", "build_error": "..."}
+```
+
+Повторный запуск build/update на тот же проект заблокирован пока предыдущий не завершится. CLI-команда `rlm-bsl-index` по-прежнему работает синхронно.
+
+Фоновый поток (`daemon=False`) не завершается при shutdown сервера — ожидает окончания сборки, чтобы не потерять полусобранный индекс. Данные `build_status` хранятся в памяти (in-memory) и недоступны после перезапуска сервера.
+
 ## 4. CLI-команды
 
 ### Полное построение

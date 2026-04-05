@@ -173,15 +173,16 @@ rlm_projects(action="add", name="ERP", path="D:/Repos/1c/erp/src/cf", password="
 Индекс ускоряет работу хелперов на больших конфигурациях. Строится через MCP-тул из AI-клиента:
 
 ```
-rlm_index(action="build", project="ERP")
+rlm_index(action="build", project="ERP")  # → {"started": true} (фон)
+rlm_index(action="info", project="ERP")   # → build_status: "building"|"done"
 ```
 
-Или через CLI:
+Или через CLI (синхронно):
 ```bash
 docker compose exec rlm rlm-bsl-index index build /repos/erp/src/cf
 ```
 
-Полный набор действий MCP-тула `rlm_index`: `build`, `update`, `info`, `drop`.
+Полный набор действий MCP-тула `rlm_index`: `build`, `update`, `info`, `drop`. build/update выполняются в фоне, статус — через info.
 
 При следующих стартах/рестартах контейнера entrypoint автоматически обновляет
 существующие индексы зарегистрированных проектов (последовательно, один за другим).

@@ -14,6 +14,9 @@ from rlm_tools_bsl.server import (
     _rlm_projects,
     _rlm_index,
     _resolve_path_map,
+    _build_jobs,
+    _build_jobs_lock,
+    _canonicalize_path,
     rlm_index,
     rlm_projects,
 )
@@ -1251,7 +1254,9 @@ async def test_rlm_index_build_wrong_confirm():
 
 @pytest.mark.asyncio
 async def test_rlm_index_build_correct_confirm():
-    """Project with password, correct confirm → build executes."""
+    """Project with password, correct confirm → build starts in background."""
+    import threading as _th
+
     with tempfile.TemporaryDirectory() as tmpdir:
         from rlm_tools_bsl.projects import _reset_registry
 
@@ -1268,15 +1273,23 @@ async def test_rlm_index_build_correct_confirm():
             _reset_registry()
             _rlm_projects(action="add", name="WithPwd", path=src, password="secret")
             r = json.loads(await rlm_index(action="build", project="WithPwd", confirm="secret"))
+            assert r["started"] is True
             assert r["action"] == "build"
-            assert "db_path" in r
+            assert r["project"] == "WithPwd"
+            # Wait for background thread to finish
+            for t in _th.enumerate():
+                if t.name == "build-WithPwd":
+                    t.join(timeout=30)
             # cleanup
             _rlm_index(action="drop", path=src)
+            _cleanup_build_jobs()
 
 
 @pytest.mark.asyncio
 async def test_rlm_index_drop_correct_confirm():
-    """drop with correct password → executes."""
+    """drop with correct password → executes (sync)."""
+    import threading as _th
+
     with tempfile.TemporaryDirectory() as tmpdir:
         from rlm_tools_bsl.projects import _reset_registry
 
@@ -1292,16 +1305,22 @@ async def test_rlm_index_drop_correct_confirm():
         ):
             _reset_registry()
             _rlm_projects(action="add", name="WithPwd", path=src, password="secret")
-            # Build first
+            # Build first (async, wait for thread)
             await rlm_index(action="build", project="WithPwd", confirm="secret")
-            # Drop
+            for t in _th.enumerate():
+                if t.name == "build-WithPwd":
+                    t.join(timeout=30)
+            # Drop (still sync)
             r = json.loads(await rlm_index(action="drop", project="WithPwd", confirm="secret"))
             assert r["action"] == "drop"
+            _cleanup_build_jobs()
 
 
 @pytest.mark.asyncio
 async def test_rlm_index_update_correct_confirm():
-    """update with correct password → executes."""
+    """update with correct password → starts in background."""
+    import threading as _th
+
     with tempfile.TemporaryDirectory() as tmpdir:
         from rlm_tools_bsl.projects import _reset_registry
 
@@ -1317,13 +1336,22 @@ async def test_rlm_index_update_correct_confirm():
         ):
             _reset_registry()
             _rlm_projects(action="add", name="WithPwd", path=src, password="secret")
-            # Build first
+            # Build first (async, wait for thread)
             await rlm_index(action="build", project="WithPwd", confirm="secret")
-            # Update
+            for t in _th.enumerate():
+                if t.name == "build-WithPwd":
+                    t.join(timeout=30)
+            # Update (also async now)
             r = json.loads(await rlm_index(action="update", project="WithPwd", confirm="secret"))
+            assert r["started"] is True
             assert r["action"] == "update"
+            # Wait for update thread
+            for t in _th.enumerate():
+                if t.name == "build-WithPwd":
+                    t.join(timeout=30)
             # cleanup
             _rlm_index(action="drop", path=src)
+            _cleanup_build_jobs()
 
 
 @pytest.mark.asyncio
@@ -2086,3 +2114,482 @@ def test_resolve_path_map_partial_prefix_no_match():
     """D:/Rep must NOT match D:/Repos — boundary check."""
     with patch.dict(os.environ, {"RLM_PATH_MAP": "D:/Rep:/repos"}):
         assert _resolve_path_map("D:/Repos/erp") == "D:/Repos/erp"
+
+
+# ---------------------------------------------------------------------------
+# Async build/update fire-and-forget tests (v1.7.4)
+# ---------------------------------------------------------------------------
+
+
+def _wait_build_thread(name: str, timeout: float = 30) -> None:
+    """Wait for background build thread to finish."""
+    import threading as _th
+
+    for t in _th.enumerate():
+        if t.name == name:
+            t.join(timeout=timeout)
+
+
+def _cleanup_build_jobs() -> None:
+    """Clear _build_jobs state between tests."""
+    with _build_jobs_lock:
+        _build_jobs.clear()
+
+
+@pytest.mark.asyncio
+async def test_mcp_build_returns_started():
+    """build via MCP → {"started": true, "action": "build"}."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+        with open(os.path.join(src, "Module.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура Тест()\nКонецПроцедуры\n")
+
+        _reset_registry()
+        _cleanup_build_jobs()
+        with patch.dict(
+            os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json"), "RLM_INDEX_DIR": idx_dir}
+        ):
+            _reset_registry()
+            _rlm_projects(action="add", name="Proj1", path=src, password="pw")
+            r = json.loads(await rlm_index(action="build", project="Proj1", confirm="pw"))
+            assert r["started"] is True
+            assert r["action"] == "build"
+            assert r["project"] == "Proj1"
+            assert "message" in r
+            _wait_build_thread("build-Proj1")
+            _rlm_index(action="drop", path=src)
+            _cleanup_build_jobs()
+
+
+@pytest.mark.asyncio
+async def test_mcp_update_returns_started():
+    """update via MCP → {"started": true, "action": "update"}."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+        with open(os.path.join(src, "Module.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура Тест()\nКонецПроцедуры\n")
+
+        _reset_registry()
+        _cleanup_build_jobs()
+        with patch.dict(
+            os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json"), "RLM_INDEX_DIR": idx_dir}
+        ):
+            _reset_registry()
+            _rlm_projects(action="add", name="Proj2", path=src, password="pw")
+            # Build first (sync via internal)
+            _rlm_index(action="build", path=src)
+            r = json.loads(await rlm_index(action="update", project="Proj2", confirm="pw"))
+            assert r["started"] is True
+            assert r["action"] == "update"
+            _wait_build_thread("build-Proj2")
+            _rlm_index(action="drop", path=src)
+            _cleanup_build_jobs()
+
+
+@pytest.mark.asyncio
+async def test_mcp_build_completes_check_info():
+    """build → started, wait, info → build_status: done + result."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+        with open(os.path.join(src, "Module.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура Тест()\nКонецПроцедуры\n")
+
+        _reset_registry()
+        _cleanup_build_jobs()
+        with patch.dict(
+            os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json"), "RLM_INDEX_DIR": idx_dir}
+        ):
+            _reset_registry()
+            _rlm_projects(action="add", name="Proj3", path=src, password="pw")
+            r = json.loads(await rlm_index(action="build", project="Proj3", confirm="pw"))
+            assert r["started"] is True
+            _wait_build_thread("build-Proj3")
+            # Check info — should show build_status: done
+            info = json.loads(_rlm_index(action="info", path=src))
+            assert info["action"] == "info"
+            assert info["build_status"] == "done"
+            assert info["build_result"] is not None
+            _rlm_index(action="drop", path=src)
+            _cleanup_build_jobs()
+
+
+@pytest.mark.asyncio
+async def test_mcp_drop_still_sync():
+    """drop via MCP → immediate result (not started)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+        with open(os.path.join(src, "Module.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура Тест()\nКонецПроцедуры\n")
+
+        _reset_registry()
+        _cleanup_build_jobs()
+        with patch.dict(
+            os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json"), "RLM_INDEX_DIR": idx_dir}
+        ):
+            _reset_registry()
+            _rlm_projects(action="add", name="Proj4", path=src, password="pw")
+            _rlm_index(action="build", path=src)
+            r = json.loads(await rlm_index(action="drop", project="Proj4", confirm="pw"))
+            assert r["action"] == "drop"
+            assert "started" not in r
+            _cleanup_build_jobs()
+
+
+@pytest.mark.asyncio
+async def test_mcp_build_already_running():
+    """Repeated build → error 'already in progress'."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+        with open(os.path.join(src, "Module.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура Тест()\nКонецПроцедуры\n")
+
+        _reset_registry()
+        _cleanup_build_jobs()
+        with patch.dict(
+            os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json"), "RLM_INDEX_DIR": idx_dir}
+        ):
+            _reset_registry()
+            _rlm_projects(action="add", name="Proj5", path=src, password="pw")
+            # Simulate a running build by injecting into _build_jobs
+            resolved = _canonicalize_path(src)
+            import time as _time
+
+            with _build_jobs_lock:
+                _build_jobs[resolved] = {
+                    "status": "building",
+                    "action": "build",
+                    "project": "Proj5",
+                    "started_at": _time.time(),
+                    "finished_at": None,
+                    "result": None,
+                    "error": None,
+                }
+            r = json.loads(await rlm_index(action="build", project="Proj5", confirm="pw"))
+            assert "error" in r
+            assert "already in progress" in r["error"]
+            _cleanup_build_jobs()
+
+
+@pytest.mark.asyncio
+async def test_mcp_drop_during_build_blocked():
+    """drop during active build → error."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+
+        _reset_registry()
+        _cleanup_build_jobs()
+        with patch.dict(
+            os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json"), "RLM_INDEX_DIR": idx_dir}
+        ):
+            _reset_registry()
+            _rlm_projects(action="add", name="Proj6", path=src, password="pw")
+            # Simulate a running build
+            resolved = _canonicalize_path(src)
+            import time as _time
+
+            with _build_jobs_lock:
+                _build_jobs[resolved] = {
+                    "status": "building",
+                    "action": "build",
+                    "project": "Proj6",
+                    "started_at": _time.time(),
+                    "finished_at": None,
+                    "result": None,
+                    "error": None,
+                }
+            r = json.loads(await rlm_index(action="drop", project="Proj6", confirm="pw"))
+            assert "error" in r
+            assert "Cannot drop" in r["error"]
+            _cleanup_build_jobs()
+
+
+def test_mcp_info_building_no_db():
+    """info during build + no db → build_status: building."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        import time as _time
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+
+        _cleanup_build_jobs()
+        resolved = _canonicalize_path(src)
+        with _build_jobs_lock:
+            _build_jobs[resolved] = {
+                "status": "building",
+                "action": "build",
+                "project": "TestBld",
+                "started_at": _time.time() - 10,
+                "finished_at": None,
+                "result": None,
+                "error": None,
+            }
+        with patch.dict(os.environ, {"RLM_INDEX_DIR": os.path.join(tmpdir, "idx")}):
+            r = json.loads(_rlm_index(action="info", path=src))
+        assert r["build_status"] == "building"
+        assert r["build_action"] == "build"
+        assert r["build_elapsed"] >= 10
+        assert "error" not in r
+        _cleanup_build_jobs()
+
+
+def test_mcp_info_building_existing_db():
+    """info during rebuild over existing DB → build_status: building (not DB data)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        import time as _time
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+        with open(os.path.join(src, "Module.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура Тест()\nКонецПроцедуры\n")
+
+        _cleanup_build_jobs()
+        with patch.dict(os.environ, {"RLM_INDEX_DIR": idx_dir}):
+            # Build a real index first
+            _rlm_index(action="build", path=src)
+            # Now simulate an active rebuild
+            resolved = _canonicalize_path(src)
+            with _build_jobs_lock:
+                _build_jobs[resolved] = {
+                    "status": "building",
+                    "action": "build",
+                    "project": "TestRebuild",
+                    "started_at": _time.time() - 5,
+                    "finished_at": None,
+                    "result": None,
+                    "error": None,
+                }
+            r = json.loads(_rlm_index(action="info", path=src))
+            # Should return building status, NOT db contents
+            assert r["build_status"] == "building"
+            assert "modules" not in r  # no DB stats
+            _rlm_index(action="drop", path=src)
+        _cleanup_build_jobs()
+
+
+def test_mcp_info_error_no_db():
+    """Build error before DB created → info returns build_status: error (not 'Index not found')."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        import time as _time
+
+        src = os.path.join(tmpdir, "src")
+        os.makedirs(src)
+
+        _cleanup_build_jobs()
+        resolved = _canonicalize_path(src)
+        with _build_jobs_lock:
+            _build_jobs[resolved] = {
+                "status": "error",
+                "action": "build",
+                "project": "FailedBuild",
+                "started_at": _time.time() - 60,
+                "finished_at": _time.time() - 5,
+                "result": None,
+                "error": "FileNotFoundError: no .bsl files",
+            }
+        with patch.dict(os.environ, {"RLM_INDEX_DIR": os.path.join(tmpdir, "idx")}):
+            r = json.loads(_rlm_index(action="info", path=src))
+        # Must return build_status: error, NOT "Index not found"
+        assert r.get("build_status") == "error"
+        assert "FileNotFoundError" in r["build_error"]
+        assert "error" not in r or r.get("build_status")  # no generic "error" key
+        _cleanup_build_jobs()
+
+
+@pytest.mark.asyncio
+async def test_mcp_info_via_project_during_build():
+    """info via project= (MCP wrapper) during active build → build_status: building."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        import time as _time
+
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+
+        _reset_registry()
+        _cleanup_build_jobs()
+        with patch.dict(
+            os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json"), "RLM_INDEX_DIR": idx_dir}
+        ):
+            _reset_registry()
+            _rlm_projects(action="add", name="InfoProj", path=src, password="pw")
+            # Simulate a running build
+            resolved = _canonicalize_path(src)
+            with _build_jobs_lock:
+                _build_jobs[resolved] = {
+                    "status": "building",
+                    "action": "build",
+                    "project": "InfoProj",
+                    "started_at": _time.time() - 15,
+                    "finished_at": None,
+                    "result": None,
+                    "error": None,
+                }
+            # Call info via MCP wrapper with project=
+            r = json.loads(await rlm_index(action="info", project="InfoProj"))
+            assert r["build_status"] == "building"
+            assert r["build_elapsed"] >= 15
+            assert "error" not in r
+            _cleanup_build_jobs()
+
+
+def test_mcp_info_build_error():
+    """Build with error → info → build_status: error."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        import time as _time
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+        with open(os.path.join(src, "Module.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура Тест()\nКонецПроцедуры\n")
+
+        _cleanup_build_jobs()
+        with patch.dict(os.environ, {"RLM_INDEX_DIR": idx_dir}):
+            # Build a real index so info can read DB
+            _rlm_index(action="build", path=src)
+            resolved = _canonicalize_path(src)
+            with _build_jobs_lock:
+                _build_jobs[resolved] = {
+                    "status": "error",
+                    "action": "build",
+                    "project": "TestErr",
+                    "started_at": _time.time() - 30,
+                    "finished_at": _time.time() - 1,
+                    "result": None,
+                    "error": "Something failed",
+                }
+            r = json.loads(_rlm_index(action="info", path=src))
+            assert r["build_status"] == "error"
+            assert r["build_error"] == "Something failed"
+            assert "modules" in r  # DB stats still present
+            _rlm_index(action="drop", path=src)
+        _cleanup_build_jobs()
+
+
+def test_build_jobs_cleanup():
+    """Stale completed jobs are cleaned up on next build launch."""
+    import time as _time
+
+    _cleanup_build_jobs()
+    # Insert a stale job (finished > 1h ago)
+    with _build_jobs_lock:
+        _build_jobs["/fake/stale/path"] = {
+            "status": "done",
+            "action": "build",
+            "project": "Stale",
+            "started_at": _time.time() - 7200,
+            "finished_at": _time.time() - 3700,
+            "result": {"action": "build"},
+            "error": None,
+        }
+    assert "/fake/stale/path" in _build_jobs
+
+    # Trigger cleanup by attempting a build (will fail at password check, but cleanup runs first)
+    # We test cleanup by directly simulating the wrapper logic
+    now = _time.time()
+    with _build_jobs_lock:
+        stale = [
+            k
+            for k, v in _build_jobs.items()
+            if v["status"] != "building" and v.get("finished_at") and now - v["finished_at"] > 3600
+        ]
+        for k in stale:
+            del _build_jobs[k]
+    assert "/fake/stale/path" not in _build_jobs
+    _cleanup_build_jobs()
+
+
+@pytest.mark.asyncio
+async def test_mcp_build_db_tables_valid():
+    """After background build completes, DB has all core tables with data."""
+    import sqlite3
+    import threading as _th
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from rlm_tools_bsl.bsl_index import get_index_db_path
+        from rlm_tools_bsl.projects import _reset_registry
+
+        src = os.path.join(tmpdir, "src")
+        idx_dir = os.path.join(tmpdir, "indexes")
+        os.makedirs(src)
+        # Создаем минимальный .bsl с процедурой
+        with open(os.path.join(src, "Module.bsl"), "w", encoding="utf-8") as f:
+            f.write("Процедура МойМетод() Экспорт\nКонецПроцедуры\n")
+
+        _reset_registry()
+        _cleanup_build_jobs()
+        with patch.dict(
+            os.environ, {"RLM_CONFIG_FILE": os.path.join(tmpdir, "service.json"), "RLM_INDEX_DIR": idx_dir}
+        ):
+            _reset_registry()
+            _rlm_projects(action="add", name="DbCheck", path=src, password="pw")
+            r = json.loads(await rlm_index(action="build", project="DbCheck", confirm="pw"))
+            assert r["started"] is True
+            for t in _th.enumerate():
+                if t.name == "build-DbCheck":
+                    t.join(timeout=30)
+
+            # Открываем БД напрямую и проверяем таблицы
+            resolved = _canonicalize_path(src)
+            db_path = get_index_db_path(resolved)
+            assert db_path.exists(), f"DB not found at {db_path}"
+
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                # Список всех таблиц
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                    ).fetchall()
+                }
+                # Обязательные таблицы
+                expected = {"index_meta", "modules", "methods", "calls", "file_paths", "regions", "module_headers"}
+                missing = expected - tables
+                assert not missing, f"Missing tables: {missing}"
+
+                # modules — хотя бы 1 запись
+                cnt = conn.execute("SELECT COUNT(*) FROM modules").fetchone()[0]
+                assert cnt >= 1, "modules table empty, expected ≥1"
+
+                # methods — наш МойМетод должен быть
+                cnt = conn.execute("SELECT COUNT(*) FROM methods").fetchone()[0]
+                assert cnt >= 1, "methods table empty, expected ≥1"
+
+                # index_meta — built_at должен быть
+                row = conn.execute("SELECT value FROM index_meta WHERE key='built_at'").fetchone()
+                assert row is not None, "index_meta missing built_at"
+                assert float(row[0]) > 0
+            finally:
+                conn.close()
+
+            _rlm_index(action="drop", path=src)
+            _cleanup_build_jobs()

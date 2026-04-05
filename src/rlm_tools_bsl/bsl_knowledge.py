@@ -489,8 +489,8 @@ def get_strategy(
         parts.append(
             "\n== INDEX ==\n"
             "No pre-built index. All helpers work via filesystem fallback (slower on large configs).\n"
-            "NEVER call rlm_index(action='build') — it takes 5-10 minutes and blocks the server. "
-            "Only the USER decides when to build indexes. Work with what you have.\n"
+            "NEVER call rlm_index(action='build') yourself — only the USER decides when to build indexes. "
+            "Build runs in background (returns immediately), but requires the project password. Work with what you have.\n"
             "WITHOUT INDEX:\n"
             "  - find_attributes(object_name='X') — WORKS (auto-resolves category via find_module, parses XML live)\n"
             "  - find_predefined(object_name='X') — WORKS (parses Predefined.xml live)\n"
@@ -609,8 +609,8 @@ RLM_START_DESCRIPTION = (
     "IMPORTANT: Use effort='high' for any multi-aspect analysis (recommended default).\n"
     "Use effort='low' ONLY for single quick lookups (find one module, read one procedure).\n"
     "For large 1C configs (23K+ files), NEVER grep on broad paths -- use find_module() first.\n"
-    "NEVER call rlm_index(action='build') yourself — index building takes 5-10 minutes and blocks I/O. "
-    "If no index exists, work without it — all helpers have filesystem fallback."
+    "NEVER call rlm_index(action='build') yourself — only the user decides when to build indexes. "
+    "Build runs in background but requires the project password. If no index exists, work without it."
 )
 
 RLM_EXECUTE_DESCRIPTION = (

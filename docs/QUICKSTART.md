@@ -55,8 +55,8 @@ rlm_projects(action="list")
 
 ```
 rlm_index(action="build", project="ERP")              # → approval_required
-rlm_index(action="build", project="ERP", confirm="секрет")  # → build выполняется
-rlm_index(action="info", project="ERP")                # info не требует пароля
+rlm_index(action="build", project="ERP", confirm="секрет")  # → {"started": true} (фон)
+rlm_index(action="info", project="ERP")                # → build_status: "building"|"done"
 ```
 
 ### Начало работы — первый вопрос

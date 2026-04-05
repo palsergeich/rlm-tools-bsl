@@ -36,7 +36,7 @@ from rlm_tools_bsl.bsl_index import (
 )
 from rlm_tools_bsl.sandbox import HelperCall
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, encoding="utf-8")
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("rlm-tools-bsl", stateless_http=True)
@@ -207,6 +207,26 @@ def _resolve_path_map(path: str) -> str:
         return container_prefix.rstrip("/") + remainder
 
     return path
+
+
+def _canonicalize_path(raw_path: str) -> str:
+    """Canonicalize path exactly as _rlm_index does: path_map → resolve → mapped drive fallback."""
+    mapped = _resolve_path_map(raw_path)
+    resolved = str(pathlib.Path(mapped).resolve())
+    if not os.path.isdir(resolved):
+        unc = _resolve_mapped_drive(mapped)
+        if unc:
+            resolved = str(pathlib.Path(unc).resolve())
+    return resolved
+
+
+# --- Background build jobs (MCP async fire-and-forget) ---
+_build_jobs_lock = threading.Lock()
+# Key = resolved filesystem path (str).
+# Value = {"status": "building"|"done"|"error", "action": "build"|"update",
+#          "project": str|None, "started_at": float, "finished_at": float|None,
+#          "result": dict|None, "error": str|None}
+_build_jobs: dict[str, dict] = {}
 
 
 def _install_session_llm_tools(session, sandbox: Sandbox) -> bool:
@@ -1161,8 +1181,8 @@ async def rlm_index(
     ] = None,
 ) -> str:
     """Manage the BSL method index — build, update, get info, or drop.
-    Full parity with CLI 'rlm-bsl-index'. Use 'build' to create index from scratch,
-    'update' for incremental refresh, 'info' for statistics, 'drop' to remove the index.
+    build/update run in background and return {"started": true} immediately;
+    check progress with info (build_status field). CLI 'rlm-bsl-index' remains synchronous.
     Provide either 'path' (filesystem path) or 'project' (registered project name).
     'build', 'update' and 'drop' require a registered project with password —
     ask the user for the project password."""
@@ -1246,6 +1266,101 @@ async def rlm_index(
 
         # Password correct — proceed with project (not path)
 
+        if action in ("build", "update"):
+            resolved_path = _canonicalize_path(matches[0]["path"])
+            job_key = resolved_path
+
+            with _build_jobs_lock:
+                # Cleanup stale completed jobs (>1h)
+                now = time.time()
+                stale = [
+                    k
+                    for k, v in _build_jobs.items()
+                    if v["status"] != "building" and v.get("finished_at") and now - v["finished_at"] > 3600
+                ]
+                for k in stale:
+                    del _build_jobs[k]
+
+                existing = _build_jobs.get(job_key)
+                if existing and existing["status"] == "building":
+                    elapsed = now - existing["started_at"]
+                    return json.dumps(
+                        {
+                            "error": f"Build/update already in progress for '{project_name}' "
+                            f"({elapsed:.0f}s elapsed). "
+                            "Check status: rlm_index(action='info', project='...')",
+                        },
+                        ensure_ascii=False,
+                    )
+                _build_jobs[job_key] = {
+                    "status": "building",
+                    "action": action,
+                    "project": project_name,
+                    "started_at": now,
+                    "finished_at": None,
+                    "result": None,
+                    "error": None,
+                }
+
+            def _bg() -> None:
+                try:
+                    result_json = _rlm_index(
+                        action=action,
+                        path=None,
+                        project=project_name,
+                        no_calls=no_calls,
+                        no_metadata=no_metadata,
+                        no_fts=no_fts,
+                        no_synonyms=no_synonyms,
+                    )
+                    parsed = json.loads(result_json)
+                    with _build_jobs_lock:
+                        job = _build_jobs.get(job_key)
+                        if job is None:
+                            return
+                        if "error" in parsed:
+                            job["status"] = "error"
+                            job["finished_at"] = time.time()
+                            job["error"] = parsed["error"]
+                        else:
+                            job["status"] = "done"
+                            job["finished_at"] = time.time()
+                            job["result"] = parsed
+                except Exception as exc:
+                    with _build_jobs_lock:
+                        job = _build_jobs.get(job_key)
+                        if job is None:
+                            return
+                        job["status"] = "error"
+                        job["finished_at"] = time.time()
+                        job["error"] = str(exc)
+
+            threading.Thread(target=_bg, daemon=False, name=f"build-{project_name}").start()
+            return json.dumps(
+                {
+                    "started": True,
+                    "action": action,
+                    "project": project_name,
+                    "message": f"{'Построение' if action == 'build' else 'Обновление'} индекса запущено в фоне. "
+                    "Проверьте статус через rlm_index(action='info', project='...'). "
+                    "Check status with rlm_index(action='info', project='...').",
+                },
+                ensure_ascii=False,
+            )
+
+        if action == "drop":
+            resolved_path = _canonicalize_path(matches[0]["path"])
+            with _build_jobs_lock:
+                job = _build_jobs.get(resolved_path)
+                if job and job["status"] == "building":
+                    return json.dumps(
+                        {
+                            "error": f"Cannot drop: build/update in progress for '{project_name}'. "
+                            "Wait for it to finish or restart the server.",
+                        },
+                        ensure_ascii=False,
+                    )
+
     return await anyio.to_thread.run_sync(
         lambda: _rlm_index(
             action=action,
@@ -1298,17 +1413,10 @@ def _rlm_index(
             return json.dumps({"error": f"Did you mean '{matches[0]['name']}'?"}, ensure_ascii=False)
         path = matches[0]["path"]
         resolved_project_name = matches[0]["name"]
-    else:
-        path = _resolve_path_map(path)
 
-    # Resolve mapped drives (Windows service)
-    resolved = str(pathlib.Path(path).resolve())
+    resolved = _canonicalize_path(path)
     if not os.path.isdir(resolved):
-        unc_path = _resolve_mapped_drive(path)
-        if unc_path:
-            resolved = str(pathlib.Path(unc_path).resolve())
-        if not os.path.isdir(resolved):
-            return json.dumps({"error": f"Path not found: {path}"}, ensure_ascii=False)
+        return json.dumps({"error": f"Path not found: {path}"}, ensure_ascii=False)
 
     try:
         if action == "build":
@@ -1343,6 +1451,39 @@ def _rlm_index(
             return json.dumps(result, ensure_ascii=False)
 
         if action == "info":
+            # Check in-memory build job state
+            with _build_jobs_lock:
+                job = _build_jobs.get(resolved)
+
+            # Short-circuit during active build — DB may be deleted/partially written
+            if job and job["status"] == "building":
+                result: dict = {
+                    "action": "info",
+                    "path": resolved,
+                    "build_status": "building",
+                    "build_action": job["action"],
+                    "build_started_at": job["started_at"],
+                    "build_elapsed": round(time.time() - job["started_at"], 1),
+                }
+                if resolved_project_name:
+                    result["project"] = resolved_project_name
+                return json.dumps(result, ensure_ascii=False)
+
+            # Error/done without DB (build failed before creating file)
+            if job and job["status"] == "error":
+                db_path = get_index_db_path(resolved)
+                if not db_path.exists():
+                    result = {
+                        "action": "info",
+                        "path": resolved,
+                        "build_status": "error",
+                        "build_error": job["error"],
+                        "build_finished_at": job["finished_at"],
+                    }
+                    if resolved_project_name:
+                        result["project"] = resolved_project_name
+                    return json.dumps(result, ensure_ascii=False)
+
             db_path = get_index_db_path(resolved)
             if not db_path.exists():
                 return json.dumps({"error": "Index not found", "path": resolved}, ensure_ascii=False)
@@ -1352,6 +1493,16 @@ def _rlm_index(
                 result = {"action": "info", "path": resolved, **stats}
                 if resolved_project_name:
                     result["project"] = resolved_project_name
+                # Enrich with completed/errored build status
+                if job:
+                    if job["status"] == "done":
+                        result["build_status"] = "done"
+                        result["build_result"] = job["result"]
+                        result["build_finished_at"] = job["finished_at"]
+                    elif job["status"] == "error":
+                        result["build_status"] = "error"
+                        result["build_error"] = job["error"]
+                        result["build_finished_at"] = job["finished_at"]
                 return json.dumps(result, ensure_ascii=False)
             finally:
                 reader.close()

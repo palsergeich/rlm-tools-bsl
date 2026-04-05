@@ -56,8 +56,8 @@ rlm_start(project="My Config", query="find module SomeModule")
 rlm_start(path="/path/to/1c-sources", query="find module SomeModule")
 
 # Индексирование по имени проекта
-rlm_index(action="build", project="My Config")
-rlm_index(action="info", project="My Config")
+rlm_index(action="build", project="My Config")  # → {"started": true} (фон)
+rlm_index(action="info", project="My Config")   # → build_status: "building"|"done"
 ```
 
 ### Поиск по имени
