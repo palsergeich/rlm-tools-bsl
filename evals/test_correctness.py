@@ -32,11 +32,7 @@ class TestGlobCorrectness:
         rlm_files = set(_json.loads(result["stdout"]))
 
         native_dir = APP_PROJECT_PATH / "app" / "Dashboard"
-        native_files = set(
-            str(f.relative_to(APP_PROJECT_PATH))
-            for f in native_dir.glob("*.swift")
-            if f.is_file()
-        )
+        native_files = set(str(f.relative_to(APP_PROJECT_PATH)) for f in native_dir.glob("*.swift") if f.is_file())
         assert rlm_files == native_files, (
             f"Mismatch:\n  RLM only: {rlm_files - native_files}\n  Native only: {native_files - rlm_files}"
         )
@@ -73,9 +69,7 @@ class TestGrepCorrectness:
         assert result["error"] is None
         files = _json.loads(result["stdout"])
         for f in files:
-            assert f.startswith("app/Dashboard"), (
-                f"Scoped grep returned file outside scope: {f}"
-            )
+            assert f.startswith("app/Dashboard"), f"Scoped grep returned file outside scope: {f}"
 
 
 class TestReadFileCorrectness:

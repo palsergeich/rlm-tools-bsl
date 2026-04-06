@@ -11,7 +11,9 @@ import json
 import logging
 import os
 import re
+import shutil
 import sqlite3
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
@@ -473,6 +475,309 @@ _CATEGORY_RU: dict[str, str] = {
 }
 
 _SYNONYM_CATEGORIES: frozenset[str] = frozenset(_CATEGORY_RU.keys())
+
+# Categories with object attributes (реквизиты, измерения, ресурсы, ТЧ)
+_ATTR_CATEGORIES: list[str] = [
+    "Documents",
+    "Catalogs",
+    "InformationRegisters",
+    "AccumulationRegisters",
+    "AccountingRegisters",
+    "ChartsOfCharacteristicTypes",
+]
+
+# Categories with predefined items
+_PREDEFINED_CATEGORIES: list[str] = [
+    "ChartsOfCharacteristicTypes",
+    "Catalogs",
+    "ChartsOfAccounts",
+]
+
+# ---------------------------------------------------------------------------
+# Git utilities for incremental delta detection
+# ---------------------------------------------------------------------------
+
+_git_exe: str | None | bool = None  # cached: str=path, False=not found, None=not yet searched
+
+# Common kwargs for all git subprocess calls.
+# errors="replace" handles cp1251 stderr from git on Windows services.
+_GIT_SUBPROCESS_KW: dict = {
+    "capture_output": True,
+    "text": True,
+    "encoding": "utf-8",
+    "errors": "replace",
+}
+
+
+def _find_git() -> str | None:
+    """Resolve git executable path (cached).
+
+    On Windows services ``git`` is often missing from PATH.
+    Falls back to common install locations and registry.
+    """
+    global _git_exe  # noqa: PLW0603
+    if _git_exe is not None:
+        return _git_exe if _git_exe is not False else None
+
+    found = shutil.which("git")
+    if found:
+        _git_exe = found
+        logger.debug("_find_git: shutil.which → %s", found)
+        return _git_exe
+
+    # Windows fallback: check common locations
+    if os.name == "nt":
+        candidates = [
+            os.path.expandvars(r"%ProgramFiles%\Git\cmd\git.exe"),
+            os.path.expandvars(r"%ProgramFiles(x86)%\Git\cmd\git.exe"),
+            os.path.expandvars(r"%LocalAppData%\Programs\Git\cmd\git.exe"),
+        ]
+        for c in candidates:
+            if os.path.isfile(c):
+                _git_exe = c
+                logger.info("_find_git: found at %s (PATH fallback)", c)
+                return _git_exe
+        # Registry fallback
+        try:
+            import winreg
+
+            for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                try:
+                    with winreg.OpenKey(hive, r"SOFTWARE\GitForWindows") as key:
+                        install_path = winreg.QueryValueEx(key, "InstallPath")[0]
+                        candidate = os.path.join(install_path, "cmd", "git.exe")
+                        if os.path.isfile(candidate):
+                            _git_exe = candidate
+                            logger.info("_find_git: found at %s (registry)", candidate)
+                            return _git_exe
+                except OSError:
+                    pass
+        except ImportError:
+            pass
+
+    logger.warning("_find_git: git not found (which=None, candidates checked, registry checked)")
+    _git_exe = False  # cache negative result — don't retry
+    return None
+
+
+def _git_base_cmd(base_path: str) -> list[str] | None:
+    """Return ``[git, -C, base_path, -c, safe.directory=*]`` or ``None``.
+
+    ``safe.directory=*`` is required because Windows services run under SYSTEM
+    which doesn't own user-created repos (CVE-2022-24765 protection).
+    The flag is scoped to this subprocess only, not global git config.
+    We never modify the repo — only read HEAD, diff, and ls-files.
+    """
+    git = _find_git()
+    if git is None:
+        return None
+    return [git, "-C", base_path, "-c", "safe.directory=*"]
+
+
+def _git_available(base_path: str) -> bool:
+    """Check if *base_path* is inside a git work-tree **and** ``git`` is reachable."""
+    cmd = _git_base_cmd(base_path)
+    if cmd is None:
+        logger.debug("_git_available: _find_git returned None")
+        return False
+    try:
+        r = subprocess.run(
+            [*cmd, "rev-parse", "--is-inside-work-tree"],
+            **_GIT_SUBPROCESS_KW,
+            timeout=10,
+        )
+        ok = r.returncode == 0 and r.stdout.strip() == "true"
+        if not ok:
+            logger.info(
+                "_git_available: cmd=%s rc=%d stdout=%r stderr=%r",
+                cmd[0],
+                r.returncode,
+                r.stdout.strip(),
+                r.stderr.strip()[:200],
+            )
+        return ok
+    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
+        logger.info("_git_available: exception %s: %s", type(exc).__name__, exc)
+        return False
+
+
+def _git_repo_info(base_path: str) -> tuple[str, str] | None:
+    """Return ``(git_root, prefix)`` or ``None`` on error.
+
+    *prefix* is the POSIX relative path from *git_root* to *base_path*
+    (empty string when they coincide).
+    """
+    cmd = _git_base_cmd(base_path)
+    if cmd is None:
+        return None
+    try:
+        r = subprocess.run(
+            [*cmd, "rev-parse", "--show-toplevel"],
+            **_GIT_SUBPROCESS_KW,
+            timeout=10,
+        )
+        if r.returncode != 0:
+            return None
+        git_root = r.stdout.strip()
+        prefix = Path(base_path).resolve().relative_to(Path(git_root).resolve()).as_posix()
+        if prefix == ".":
+            prefix = ""
+        return (git_root, prefix)
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        return None
+
+
+def _git_head_sha(base_path: str) -> str | None:
+    """Return current HEAD SHA (40-char hex) or ``None``."""
+    cmd = _git_base_cmd(base_path)
+    if cmd is None:
+        return None
+    try:
+        r = subprocess.run(
+            [*cmd, "rev-parse", "HEAD"],
+            **_GIT_SUBPROCESS_KW,
+            timeout=10,
+        )
+        return r.stdout.strip() if r.returncode == 0 else None
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def _git_changed_files(base_path: str, since_commit: str, prefix: str) -> set[str] | None:
+    """Collect all files changed since *since_commit* (committed+staged+unstaged+untracked).
+
+    Paths are returned relative to *base_path* (prefix stripped).
+    Returns ``None`` on any git error (caller should fall back to full scan).
+    """
+    # Verify since_commit is an ancestor of HEAD
+    cmd = _git_base_cmd(base_path)
+    if cmd is None:
+        return None
+    try:
+        r = subprocess.run(
+            [*cmd, "merge-base", "--is-ancestor", since_commit, "HEAD"],
+            **_GIT_SUBPROCESS_KW,
+            timeout=60,
+        )
+        if r.returncode != 0:
+            return None
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+    base_args = [*cmd, "-c", "core.quotePath=false"]
+
+    def _run_git(args: list[str], *, critical: bool = True) -> set[str] | None:
+        """Run a git command and return the set of output lines.
+
+        *critical* commands return ``None`` on failure (aborting the fast path).
+        Best-effort commands return an empty set on timeout/error — their files
+        will be picked up via the dirty snapshot on the next update.
+        """
+        try:
+            r = subprocess.run(args, **_GIT_SUBPROCESS_KW, timeout=60)
+            if r.returncode != 0:
+                if not critical:
+                    logger.info("_git_changed_files: best-effort cmd rc=%d, skipping", r.returncode)
+                    return set()
+                return None
+            return {line.strip() for line in r.stdout.splitlines() if line.strip()}
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            if not critical:
+                logger.info("_git_changed_files: best-effort cmd %s, skipping", type(exc).__name__)
+                return set()
+            return None
+
+    def _strip_prefix(paths: set[str]) -> set[str]:
+        """Strip git-root prefix to get paths relative to base_path."""
+        if not prefix:
+            return paths
+        result: set[str] = set()
+        pfx = prefix + "/"
+        for p in paths:
+            if p.startswith(pfx):
+                result.add(p[len(pfx) :])
+        return result
+
+    # 1: committed diff — CRITICAL (compares git objects, no FS access, always fast).
+    committed = _run_git(
+        [
+            *base_args,
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "--no-ext-diff",
+            "--no-textconv",
+            since_commit,
+            "HEAD",
+            "--",
+            ".",
+        ],
+        critical=True,
+    )
+    if committed is None:
+        return None
+
+    # 2-3: staged & unstaged diff — BEST-EFFORT.
+    # These commands stat() every file in the work-tree which can exceed the
+    # subprocess timeout on Docker Desktop / Virtiofs with large projects.
+    # On timeout the files are silently skipped — they will be captured by the
+    # dirty snapshot and force-included in the next update's delta.
+    staged = _run_git(
+        [*base_args, "diff", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "--cached", "--", "."],
+        critical=False,
+    )
+    unstaged = _run_git(
+        [*base_args, "diff", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "--", "."],
+        critical=False,
+    )
+
+    git_root_paths = committed | staged | unstaged
+
+    # 4: untracked files — BEST-EFFORT (same Virtiofs concern).
+    # ls-files returns paths relative to -C directory (base_path) → no prefix stripping.
+    ls_paths = _run_git(
+        [*base_args, "ls-files", "--others", "--exclude-standard"],
+        critical=False,
+    )
+
+    return _strip_prefix(git_root_paths) | ls_paths
+
+
+def _git_current_dirty(base_path: str, prefix: str) -> set[str]:
+    """Return files currently in dirty state (staged+unstaged+untracked), prefix-stripped."""
+    cmd = _git_base_cmd(base_path)
+    if cmd is None:
+        return set()
+    base_args = [*cmd, "-c", "core.quotePath=false"]
+
+    def _run(cmd: list[str]) -> set[str]:
+        try:
+            r = subprocess.run(cmd, **_GIT_SUBPROCESS_KW, timeout=60)
+            if r.returncode == 0:
+                return {line.strip() for line in r.stdout.splitlines() if line.strip()}
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        return set()
+
+    # diff returns paths relative to git root → need prefix stripping.
+    # "-- ." limits scope to base_path subtree (see _git_changed_files comment).
+    diff_paths = _run(
+        [*base_args, "diff", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "--cached", "--", "."]
+    )
+    diff_paths |= _run([*base_args, "diff", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", "--", "."])
+    # ls-files returns paths relative to -C directory → already correct
+    ls_paths = _run([*base_args, "ls-files", "--others", "--exclude-standard"])
+
+    stripped: set[str] = set()
+    if prefix:
+        pfx = prefix + "/"
+        for p in diff_paths:
+            if p.startswith(pfx):
+                stripped.add(p[len(pfx) :])
+    else:
+        stripped = diff_paths
+
+    return stripped | ls_paths
 
 
 # ---------------------------------------------------------------------------
@@ -976,10 +1281,29 @@ def _parse_configuration_meta(base_path: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Level-2 metadata collection (ES, SJ, FO)
 # ---------------------------------------------------------------------------
-def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
-    """Scan and parse EventSubscriptions, ScheduledJobs, FunctionalOptions XMLs.
+def _collect_metadata_tables(
+    base_path: str,
+    *,
+    collect_es: bool = True,
+    collect_sj: bool = True,
+    collect_fo: bool = True,
+    collect_enums: bool = True,
+    collect_subs: bool = True,
+    collect_http: bool = True,
+    collect_ws: bool = True,
+    collect_xdto: bool = True,
+    collect_attrs_categories: set[str] | None = None,
+) -> dict[str, list[tuple]]:
+    """Scan and parse metadata XMLs selectively.
 
-    Returns dict with keys: event_subscriptions, scheduled_jobs, functional_options.
+    By default (all flags True, collect_attrs_categories=None) collects everything.
+    When *collect_attrs_categories* is ``None`` all ``_ATTR_CATEGORIES`` are scanned;
+    when it is an empty ``set()`` object_attributes/predefined_items are skipped;
+    when it contains specific categories only those are scanned.
+
+    Returns dict with keys: event_subscriptions, scheduled_jobs, functional_options,
+    enum_values, subsystem_content, http_services, web_services, xdto_packages,
+    object_attributes, predefined_items.
     Each value is a list of tuples ready for INSERT.
     """
     from rlm_tools_bsl.bsl_xml_parsers import (
@@ -1027,7 +1351,7 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         return files
 
     # EventSubscriptions
-    for fp in _glob_xml("EventSubscriptions"):
+    for fp in _glob_xml("EventSubscriptions") if collect_es else []:
         content = _read(fp)
         if not content:
             continue
@@ -1054,7 +1378,7 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         )
 
     # ScheduledJobs
-    for fp in _glob_xml("ScheduledJobs"):
+    for fp in _glob_xml("ScheduledJobs") if collect_sj else []:
         content = _read(fp)
         if not content:
             continue
@@ -1083,7 +1407,7 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         )
 
     # FunctionalOptions
-    for fp in _glob_xml("FunctionalOptions"):
+    for fp in _glob_xml("FunctionalOptions") if collect_fo else []:
         content = _read(fp)
         if not content:
             continue
@@ -1103,7 +1427,7 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         )
 
     # Enums
-    for fp in _glob_xml("Enums"):
+    for fp in _glob_xml("Enums") if collect_enums else []:
         content = _read(fp)
         if not content:
             continue
@@ -1121,7 +1445,7 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         )
 
     # Subsystems
-    for fp in _glob_xml("Subsystems"):
+    for fp in _glob_xml("Subsystems") if collect_subs else []:
         content = _read(fp)
         if not content:
             continue
@@ -1143,7 +1467,7 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
             )
 
     # HTTPServices
-    for fp in _glob_xml("HTTPServices"):
+    for fp in _glob_xml("HTTPServices") if collect_http else []:
         content = _read(fp)
         if not content:
             continue
@@ -1161,7 +1485,7 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         )
 
     # WebServices
-    for fp in _glob_xml("WebServices"):
+    for fp in _glob_xml("WebServices") if collect_ws else []:
         content = _read(fp)
         if not content:
             continue
@@ -1179,7 +1503,7 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         )
 
     # XDTOPackages
-    for fp in _glob_xml("XDTOPackages"):
+    for fp in _glob_xml("XDTOPackages") if collect_xdto else []:
         content = _read(fp)
         if not content:
             continue
@@ -1204,15 +1528,6 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
         )
 
     # --- Level-11: Object attributes (реквизиты, измерения, ресурсы, колонки ТЧ) ---
-    _ATTR_CATEGORIES = [
-        "Documents",
-        "Catalogs",
-        "InformationRegisters",
-        "AccumulationRegisters",
-        "AccountingRegisters",
-        "ChartsOfCharacteristicTypes",
-    ]
-
     # Best-effort CF XML suffix hints (first attempt, NOT authoritative)
     _CF_XML_HINTS: dict[str, str] = {
         "Documents": "Document",
@@ -1248,7 +1563,12 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
                     return fp
         return None
 
+    # Determine which attribute categories to scan
+    _active_attr_cats = set(_ATTR_CATEGORIES) if collect_attrs_categories is None else collect_attrs_categories
+
     for category in _ATTR_CATEGORIES:
+        if category not in _active_attr_cats:
+            continue
         cat_dir = base / category
         if not cat_dir.is_dir():
             continue
@@ -1332,12 +1652,14 @@ def _collect_metadata_tables(base_path: str) -> dict[str, list[tuple]]:
                     )
 
     # --- Level-11: Predefined items (ПВХ, справочники, планы счетов) ---
-    _PREDEFINED_CATEGORIES = [
-        "ChartsOfCharacteristicTypes",
-        "Catalogs",
-        "ChartsOfAccounts",
-    ]
+    _active_predef_cats = (
+        set(_PREDEFINED_CATEGORIES)
+        if collect_attrs_categories is None
+        else (collect_attrs_categories & set(_PREDEFINED_CATEGORIES))
+    )
     for category in _PREDEFINED_CATEGORIES:
+        if category not in _active_predef_cats:
+            continue
         cat_dir = base / category
         if not cat_dir.is_dir():
             continue
@@ -1478,6 +1800,86 @@ def _insert_metadata_tables(conn: sqlite3.Connection, tables: dict[str, list[tup
         conn.execute("DELETE FROM predefined_items")
     except sqlite3.OperationalError:
         pass
+    if tables.get("predefined_items"):
+        conn.executemany(
+            "INSERT INTO predefined_items "
+            "(object_name, category, item_name, item_synonym, item_code, types_json, is_folder, source_file) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            tables["predefined_items"],
+        )
+
+
+def _insert_metadata_tables_selective(
+    conn: sqlite3.Connection,
+    tables: dict[str, list[tuple]],
+    changed_categories: set[str],
+) -> None:
+    """Insert Level-2 metadata selectively — only categories present in *changed_categories*.
+
+    Tables without a ``category`` column (event_subscriptions, scheduled_jobs, etc.)
+    are DELETE-d entirely when their trigger category is in *changed_categories*.
+    Tables with a ``category`` column are DELETE-d per-category.
+    """
+    # Category-independent tables: full DELETE + INSERT when flag is on
+    _TABLE_CATEGORY_MAP: dict[str, str] = {
+        "event_subscriptions": "EventSubscriptions",
+        "scheduled_jobs": "ScheduledJobs",
+        "functional_options": "FunctionalOptions",
+        "enum_values": "Enums",
+        "subsystem_content": "Subsystems",
+        "http_services": "HTTPServices",
+        "web_services": "WebServices",
+        "xdto_packages": "XDTOPackages",
+    }
+    _TABLE_INSERT_SQL: dict[str, str] = {
+        "event_subscriptions": (
+            "INSERT INTO event_subscriptions "
+            "(name, synonym, event, handler_module, handler_procedure, source_types, source_count, file) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ),
+        "scheduled_jobs": (
+            "INSERT INTO scheduled_jobs "
+            "(name, synonym, method_name, handler_module, handler_procedure, "
+            "use, predefined, restart_count, restart_interval, file) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ),
+        "functional_options": "INSERT INTO functional_options (name, synonym, location, content, file) VALUES (?, ?, ?, ?, ?)",
+        "enum_values": "INSERT INTO enum_values (name, synonym, values_json, source_file) VALUES (?, ?, ?, ?)",
+        "subsystem_content": "INSERT INTO subsystem_content (subsystem_name, subsystem_synonym, object_ref, file) VALUES (?, ?, ?, ?)",
+        "http_services": "INSERT INTO http_services (name, root_url, templates_json, file) VALUES (?, ?, ?, ?)",
+        "web_services": "INSERT INTO web_services (name, namespace, operations_json, file) VALUES (?, ?, ?, ?)",
+        "xdto_packages": "INSERT INTO xdto_packages (name, namespace, types_json, file) VALUES (?, ?, ?, ?)",
+    }
+
+    for table_name, trigger_cat in _TABLE_CATEGORY_MAP.items():
+        if trigger_cat not in changed_categories:
+            continue
+        try:
+            conn.execute(f"DELETE FROM {table_name}")  # noqa: S608
+        except sqlite3.OperationalError:
+            pass
+        rows = tables.get(table_name)
+        if rows:
+            conn.executemany(_TABLE_INSERT_SQL[table_name], rows)
+
+    # Category-aware tables: DELETE by category
+    for cat in changed_categories:
+        try:
+            conn.execute("DELETE FROM object_attributes WHERE category = ?", (cat,))
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("DELETE FROM predefined_items WHERE category = ?", (cat,))
+        except sqlite3.OperationalError:
+            pass
+
+    if tables.get("object_attributes"):
+        conn.executemany(
+            "INSERT INTO object_attributes "
+            "(object_name, category, attr_name, attr_synonym, attr_type, attr_kind, ts_name, source_file) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            tables["object_attributes"],
+        )
     if tables.get("predefined_items"):
         conn.executemany(
             "INSERT INTO predefined_items "
@@ -1828,11 +2230,15 @@ def _collect_role_rights(base_path: str) -> list[tuple[str, str, str, str]]:
 # ---------------------------------------------------------------------------
 
 
-def _collect_object_synonyms(base_path: str) -> list[tuple[str, str, str, str]]:
-    """Collect object synonyms from all metadata categories.
+def _collect_object_synonyms(
+    base_path: str,
+    *,
+    categories: frozenset[str] | None = None,
+) -> list[tuple[str, str, str, str]]:
+    """Collect object synonyms from metadata categories.
 
-    Iterates top-level object directories (NOT recursive rglob) to get
-    canonical root metadata files. Extracts synonym via parse_metadata_xml().
+    When *categories* is ``None`` (default) — all ``_SYNONYM_CATEGORIES`` are scanned.
+    When a specific frozenset is passed — only those categories are scanned.
 
     Returns list of (object_name, category, prefixed_synonym, rel_path).
     """
@@ -1931,13 +2337,14 @@ def _collect_object_synonyms(base_path: str) -> list[tuple[str, str, str, str]]:
                 _collect_subsystems_recursive(nested, cat, results)
 
     # Parallel collection by category (I/O bound)
-    categories = [c for c in _SYNONYM_CATEGORIES if (base / c).is_dir()]
-    if not categories:
+    target_cats = categories if categories is not None else _SYNONYM_CATEGORIES
+    cats_list = [c for c in target_cats if (base / c).is_dir()]
+    if not cats_list:
         return all_results
 
     workers = min(os.cpu_count() or 4, 8)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for batch in pool.map(_collect_category, categories):
+        for batch in pool.map(_collect_category, cats_list):
             all_results.extend(batch)
 
     return all_results
@@ -2380,6 +2787,22 @@ class IndexBuilder:
                 "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
                 ("form_elements_count", "0"),
             )
+            # Save git HEAD so first update can use git fast path
+            if _git_available(base_path):
+                head = _git_head_sha(base_path)
+                if head:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                        ("git_head_commit", head),
+                    )
+                    repo_info = _git_repo_info(base_path)
+                    if repo_info:
+                        _, pfx = repo_info
+                        dirty_now = _git_current_dirty(base_path, pfx)
+                        conn.execute(
+                            "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                            ("git_dirty_paths", json.dumps(sorted(dirty_now), ensure_ascii=False)),
+                        )
             conn.commit()
             conn.close()
             return db_path
@@ -2545,6 +2968,25 @@ class IndexBuilder:
             build_synonyms=build_synonyms,
         )
 
+        # Save git HEAD commit so first update can use git fast path
+        if _git_available(base_path):
+            head = _git_head_sha(base_path)
+            if head:
+                conn.execute(
+                    "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                    ("git_head_commit", head),
+                )
+                # Save dirty snapshot for dirty→clean detection
+                repo_info = _git_repo_info(base_path)
+                if repo_info:
+                    _, pfx = repo_info
+                    dirty_now = _git_current_dirty(base_path, pfx)
+                    conn.execute(
+                        "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                        ("git_dirty_paths", json.dumps(sorted(dirty_now), ensure_ascii=False)),
+                    )
+                conn.commit()
+
         conn.execute("ANALYZE")
         conn.execute("VACUUM")
         conn.close()
@@ -2585,13 +3027,6 @@ class IndexBuilder:
         t0 = time.time()
         base = Path(base_path)
 
-        # Current files on disk
-        bsl_files = sorted(base.rglob("*.bsl"))
-        disk_files: dict[str, Path] = {}
-        for fp in bsl_files:
-            rel = fp.relative_to(base).as_posix()
-            disk_files[rel] = fp
-
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
@@ -2615,25 +3050,90 @@ class IndexBuilder:
         meta_row = conn.execute("SELECT value FROM index_meta WHERE key = 'builder_version'").fetchone()
         old_version = int(meta_row["value"]) if meta_row else 0
         if old_version < 8:
+            # Need disk scan for the return count
+            bsl_files = sorted(base.rglob("*.bsl"))
             logger.info(
                 "Upgrading index v%d → v%d: full rebuild required for regions/module_headers",
                 old_version,
                 BUILDER_VERSION,
             )
             conn.close()
-            db_path = self.build(
+            self.build(
                 base_path,
                 build_calls=build_calls,
                 build_metadata=has_metadata,
                 build_fts=has_fts,
                 build_synonyms=has_synonyms,
             )
-            # Return in update-format: full rebuild = all modules added
             return {
-                "added": len(disk_files),
+                "added": len(bsl_files),
                 "changed": 0,
                 "removed": 0,
+                "git_fast_path": False,
             }
+
+        # --- Git fast path attempt ---
+        force_full_scan = old_version != BUILDER_VERSION and old_version >= 8
+        fallback_reason = ""
+
+        if not force_full_scan:
+            stored_commit_row = conn.execute("SELECT value FROM index_meta WHERE key = 'git_head_commit'").fetchone()
+            stored_commit = stored_commit_row["value"] if stored_commit_row else None
+
+            if stored_commit and _git_available(base_path):
+                repo_info = _git_repo_info(base_path)
+                if repo_info:
+                    git_root, prefix = repo_info
+                    git_head = _git_head_sha(base_path)
+                    git_changed = _git_changed_files(base_path, stored_commit, prefix)
+
+                    if git_changed is not None and git_head is not None:
+                        # Merge previously-dirty files into delta
+                        stored_dirty_row = conn.execute(
+                            "SELECT value FROM index_meta WHERE key = 'git_dirty_paths'"
+                        ).fetchone()
+                        if stored_dirty_row:
+                            prev_dirty = set(json.loads(stored_dirty_row["value"]))
+                            git_changed |= prev_dirty
+
+                        delta = self._update_git_fast(
+                            conn,
+                            base_path,
+                            base,
+                            git_changed,
+                            git_head,
+                            prefix,
+                            build_calls,
+                            has_metadata,
+                            has_fts,
+                            has_synonyms,
+                        )
+                        conn.commit()
+                        conn.execute("ANALYZE")
+                        conn.close()
+                        elapsed = time.time() - t0
+                        logger.info("Git fast path update done in %.1fs", elapsed)
+                        return {**delta, "git_fast_path": True}
+                    else:
+                        fallback_reason = "git error" if git_changed is None else "head sha error"
+                else:
+                    fallback_reason = "repo info error"
+            elif not stored_commit:
+                fallback_reason = "no stored commit"
+            else:
+                fallback_reason = "no git"
+        else:
+            fallback_reason = "builder version mismatch"
+
+        if fallback_reason:
+            logger.info("Git fast path unavailable (%s), using full scan", fallback_reason)
+
+        # --- Fallback: full scan (original logic) ---
+        bsl_files = sorted(base.rglob("*.bsl"))
+        disk_files: dict[str, Path] = {}
+        for fp in bsl_files:
+            rel = fp.relative_to(base).as_posix()
+            disk_files[rel] = fp
 
         # Existing modules in DB
         db_modules: dict[str, dict] = {}
@@ -3007,6 +3507,23 @@ class IndexBuilder:
             ("version", str(BUILDER_VERSION)),
         )
 
+        # Save git_head_commit on fallback so NEXT update can use git fast path
+        if _git_available(base_path):
+            head = _git_head_sha(base_path)
+            if head:
+                conn.execute(
+                    "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                    ("git_head_commit", head),
+                )
+                repo_info = _git_repo_info(base_path)
+                if repo_info:
+                    _, pfx = repo_info
+                    dirty_now = _git_current_dirty(base_path, pfx)
+                    conn.execute(
+                        "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                        ("git_dirty_paths", json.dumps(sorted(dirty_now), ensure_ascii=False)),
+                    )
+
         conn.commit()
         conn.execute("ANALYZE")
         conn.close()
@@ -3018,7 +3535,370 @@ class IndexBuilder:
             "added": len(added_paths),
             "changed": len(changed_paths),
             "removed": len(removed_paths),
+            "git_fast_path": False,
         }
+
+    def _update_git_fast(
+        self,
+        conn: sqlite3.Connection,
+        base_path: str,
+        base: Path,
+        git_changed: set[str],
+        git_head: str,
+        prefix: str,
+        build_calls: bool,
+        has_metadata: bool,
+        has_fts: bool,
+        has_synonyms: bool,
+    ) -> dict:
+        """Git-accelerated incremental update — only process changed files."""
+        # --- BSL delta ---
+        bsl_changed_rel = {p for p in git_changed if p.lower().endswith(".bsl")}
+
+        db_modules: dict[str, dict] = {}
+        for row in conn.execute("SELECT id, rel_path, mtime, size FROM modules"):
+            db_modules[row["rel_path"]] = {
+                "id": row["id"],
+                "mtime": row["mtime"],
+                "size": row["size"],
+            }
+
+        added: set[str] = set()
+        changed: set[str] = set()
+        removed: set[str] = set()
+
+        for rel in bsl_changed_rel:
+            full_path = base / rel
+            if full_path.exists():
+                if rel in db_modules:
+                    changed.add(rel)
+                else:
+                    added.add(rel)
+            else:
+                if rel in db_modules:
+                    removed.add(rel)
+
+        to_remove = removed | changed
+        to_add = added | changed
+
+        logger.info(
+            "Git fast path: %d changed files (%d bsl: +%d ~%d -%d)",
+            len(git_changed),
+            len(bsl_changed_rel),
+            len(added),
+            len(changed),
+            len(removed),
+        )
+
+        # Build disk_files map for files to add
+        disk_files: dict[str, Path] = {}
+        for rel in to_add:
+            fp = base / rel
+            if fp.exists():
+                disk_files[rel] = fp
+
+        bsl_delta = bool(to_remove or to_add)
+
+        if bsl_delta:
+            results: list[FileResult] = []
+            if to_add:
+                workers = min(os.cpu_count() or 4, 8)
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = {
+                        pool.submit(
+                            _process_single_file,
+                            disk_files[rel],
+                            base_path,
+                            build_calls,
+                        ): rel
+                        for rel in to_add
+                        if rel in disk_files
+                    }
+                    for future in as_completed(futures):
+                        result = future.result()
+                        if result is not None:
+                            results.append(result)
+
+            with conn:
+                if to_remove:
+                    for rel in to_remove:
+                        mod_info = db_modules.get(rel)
+                        if mod_info is None:
+                            continue
+                        mod_id = mod_info["id"]
+                        method_ids = [
+                            row[0] for row in conn.execute("SELECT id FROM methods WHERE module_id = ?", (mod_id,))
+                        ]
+                        if method_ids:
+                            placeholders = ",".join("?" * len(method_ids))
+                            conn.execute(
+                                f"DELETE FROM calls WHERE caller_id IN ({placeholders})",
+                                method_ids,
+                            )
+                            if has_fts:
+                                conn.execute(
+                                    f"DELETE FROM methods_fts WHERE rowid IN ({placeholders})",
+                                    method_ids,
+                                )
+                        conn.execute("DELETE FROM methods WHERE module_id = ?", (mod_id,))
+                        try:
+                            conn.execute("DELETE FROM regions WHERE module_id = ?", (mod_id,))
+                        except sqlite3.OperationalError:
+                            pass
+                        try:
+                            conn.execute("DELETE FROM module_headers WHERE module_id = ?", (mod_id,))
+                        except sqlite3.OperationalError:
+                            pass
+                        conn.execute("DELETE FROM modules WHERE id = ?", (mod_id,))
+
+                self._bulk_insert(conn, results, build_calls)
+
+                if has_fts and results:
+                    new_rel_paths = [r.info.relative_path for r in results]
+                    placeholders = ",".join("?" * len(new_rel_paths))
+                    conn.execute(
+                        f"INSERT INTO methods_fts(rowid, name, object_name) "
+                        f"SELECT m.id, m.name, mod.object_name "
+                        f"FROM methods m JOIN modules mod ON mod.id = m.module_id "
+                        f"WHERE mod.rel_path IN ({placeholders})",
+                        new_rel_paths,
+                    )
+
+                if results:
+                    changed_doc_names = set()
+                    for r in results:
+                        if r.info.category == "Documents" and r.info.object_name:
+                            changed_doc_names.add(r.info.object_name)
+                    for doc_name in changed_doc_names:
+                        try:
+                            conn.execute(
+                                "DELETE FROM register_movements WHERE document_name = ?",
+                                (doc_name,),
+                            )
+                        except sqlite3.OperationalError:
+                            pass
+                    new_movements: list[tuple[str, str, str, str]] = []
+                    for r in results:
+                        if r.movements and r.info.object_name:
+                            for reg_name, source, fpath in r.movements:
+                                new_movements.append((r.info.object_name, reg_name, source, fpath))
+                    if new_movements:
+                        conn.executemany(
+                            "INSERT INTO register_movements "
+                            "(document_name, register_name, source, file) VALUES (?, ?, ?, ?)",
+                            new_movements,
+                        )
+
+        # --- Update bsl_count, paths_hash, built_at ---
+        stored_count_row = conn.execute("SELECT value FROM index_meta WHERE key = 'bsl_count'").fetchone()
+        stored_count = int(stored_count_row["value"]) if stored_count_row else 0
+        new_bsl_count = stored_count + len(added) - len(removed)
+        conn.execute(
+            "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+            ("bsl_count", str(new_bsl_count)),
+        )
+
+        all_paths = [row[0] for row in conn.execute("SELECT rel_path FROM modules ORDER BY rel_path")]
+        new_hash = _paths_hash(all_paths)
+        conn.execute(
+            "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+            ("paths_hash", new_hash),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+            ("built_at", str(time.time())),
+        )
+
+        # --- Level-1: configuration meta (always) ---
+        config_meta = _parse_configuration_meta(base_path)
+        for key, value in config_meta.items():
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+
+        # --- Selective metadata refresh based on separate trigger sets ---
+        # .xml/.mdo → category-based metadata tables, attrs, synonyms
+        xml_mdo_changed = {p for p in git_changed if p.lower().endswith((".xml", ".mdo"))}
+        # .form → form_elements only
+        form_changed = {p for p in git_changed if p.lower().endswith(".form")}
+        # .rights → role_rights only
+        rights_changed = {p for p in git_changed if p.lower().endswith(".rights")}
+        # .xdto → xdto_packages (via category detection from path)
+        xdto_changed = {p for p in git_changed if p.lower().endswith(".xdto")}
+
+        # Categories from .xml/.mdo/.xdto only (NOT .form/.rights)
+        obj_meta_changed = xml_mdo_changed | xdto_changed
+        changed_categories = {p.split("/")[0] for p in obj_meta_changed} if obj_meta_changed else set()
+
+        # Any meta file changed (union of all trigger sets)
+        any_meta_changed = xml_mdo_changed | form_changed | rights_changed | xdto_changed
+
+        if obj_meta_changed and has_metadata:
+            attrs_cats = changed_categories & (set(_ATTR_CATEGORIES) | set(_PREDEFINED_CATEGORIES))
+
+            md_tables = _collect_metadata_tables(
+                base_path,
+                collect_es="EventSubscriptions" in changed_categories,
+                collect_sj="ScheduledJobs" in changed_categories,
+                collect_fo="FunctionalOptions" in changed_categories,
+                collect_enums="Enums" in changed_categories,
+                collect_subs="Subsystems" in changed_categories,
+                collect_http="HTTPServices" in changed_categories,
+                collect_ws="WebServices" in changed_categories,
+                collect_xdto="XDTOPackages" in changed_categories,
+                collect_attrs_categories=attrs_cats,
+            )
+            _insert_metadata_tables_selective(conn, md_tables, changed_categories)
+
+        # form_elements: only if .form files changed
+        if form_changed and has_metadata:
+            try:
+                conn.execute("DELETE FROM form_elements")
+            except sqlite3.OperationalError:
+                pass
+            fe_rows = _collect_form_elements(base_path)
+            if fe_rows:
+                conn.executemany(_FORM_ELEMENTS_INSERT, fe_rows)
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                ("has_form_elements", "1"),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                ("form_elements_count", str(len(fe_rows))),
+            )
+
+        # object_synonyms: selective by category (only .xml/.mdo trigger)
+        if obj_meta_changed and has_synonyms:
+            synonym_cats = changed_categories & _SYNONYM_CATEGORIES
+            if synonym_cats:
+                for cat in synonym_cats:
+                    conn.execute("DELETE FROM object_synonyms WHERE category = ?", (cat,))
+                synonyms = _collect_object_synonyms(base_path, categories=frozenset(synonym_cats))
+                if synonyms:
+                    conn.executemany(
+                        "INSERT INTO object_synonyms (object_name, category, synonym, file) VALUES (?, ?, ?, ?)",
+                        synonyms,
+                    )
+
+        # role_rights: only if .rights files or Roles/.xml changed
+        if rights_changed or (obj_meta_changed and "Roles" in changed_categories):
+            try:
+                conn.execute("DELETE FROM role_rights")
+            except sqlite3.OperationalError:
+                pass
+            role_rights = _collect_role_rights(base_path)
+            if role_rights:
+                conn.executemany(
+                    "INSERT INTO role_rights (role_name, object_name, right_name, file) VALUES (?, ?, ?, ?)",
+                    role_rights,
+                )
+
+        # file_paths: incremental for BSL-only, full if any meta file changed
+        if any_meta_changed:
+            file_paths_rows = _collect_file_paths(base_path)
+            _insert_file_paths(conn, file_paths_rows)
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                ("file_paths_count", str(len(file_paths_rows))),
+            )
+        elif bsl_delta:
+            self._refresh_file_paths_delta(conn, base, bsl_changed_rel, added, removed)
+
+        # detected_prefixes
+        detected_prefixes = _detect_prefixes(conn)
+        conn.execute(
+            "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+            ("detected_prefixes", json.dumps(detected_prefixes, ensure_ascii=False)),
+        )
+
+        # extension_overrides: rebuild if BSL or any meta changed
+        if bsl_delta or any_meta_changed:
+            try:
+                conn.execute("DELETE FROM extension_overrides")
+            except sqlite3.OperationalError:
+                pass
+            override_rows = _collect_extension_overrides(base_path, conn)
+            if override_rows:
+                conn.executemany(
+                    "INSERT INTO extension_overrides "
+                    "(object_name, source_path, source_module_id, target_method, "
+                    "target_method_line, annotation, extension_name, extension_purpose, "
+                    "extension_method, extension_root, ext_module_path, ext_line) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    override_rows,
+                )
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                ("has_extension_overrides", "1" if override_rows else "0"),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+                ("extension_overrides_count", str(len(override_rows))),
+            )
+
+        # Save git_head_commit + dirty snapshot
+        conn.execute(
+            "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+            ("git_head_commit", git_head),
+        )
+        dirty_now = _git_current_dirty(base_path, prefix)
+        conn.execute(
+            "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+            ("git_dirty_paths", json.dumps(sorted(dirty_now), ensure_ascii=False)),
+        )
+
+        return {
+            "added": len(added),
+            "changed": len(changed),
+            "removed": len(removed),
+        }
+
+    @staticmethod
+    def _refresh_file_paths_delta(
+        conn: sqlite3.Connection,
+        base: Path,
+        bsl_changed_rel: set[str],
+        added: set[str],
+        removed: set[str],
+    ) -> None:
+        """Incremental update of file_paths for changed BSL files only."""
+        all_affected = added | removed | bsl_changed_rel
+        for rel in all_affected:
+            try:
+                conn.execute("DELETE FROM file_paths WHERE rel_path = ?", (rel,))
+            except sqlite3.OperationalError:
+                pass
+
+        new_rows: list[tuple] = []
+        for rel in all_affected:
+            fp = base / rel
+            if fp.exists():
+                try:
+                    st = fp.stat()
+                except OSError:
+                    continue
+                ext = fp.suffix.lower()
+                parts = rel.split("/")
+                dir_path = "/".join(parts[:-1]) if len(parts) > 1 else ""
+                filename = fp.name
+                depth = len(parts)
+                new_rows.append((rel, ext, dir_path, filename, depth, st.st_size, st.st_mtime))
+
+        if new_rows:
+            conn.executemany(
+                "INSERT OR REPLACE INTO file_paths "
+                "(rel_path, extension, dir_path, filename, depth, size, mtime) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                new_rows,
+            )
+
+        count = conn.execute("SELECT COUNT(*) FROM file_paths").fetchone()[0]
+        conn.execute(
+            "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
+            ("file_paths_count", str(count)),
+        )
 
     # --- Private helpers ---
 
@@ -3958,6 +4838,14 @@ class IndexReader:
                     stats[table] = row["cnt"] if row else 0
                 except sqlite3.Error:
                     stats[table] = 0
+
+            # Git acceleration info
+            meta_row = self._conn.execute("SELECT value FROM index_meta WHERE key = 'git_head_commit'").fetchone()
+            stats["git_head_commit"] = meta_row["value"] if meta_row else None
+            # Live check: git available at base_path right now?
+            bp_row = self._conn.execute("SELECT value FROM index_meta WHERE key = 'base_path'").fetchone()
+            bp = bp_row["value"] if bp_row else None
+            stats["git_accelerated"] = stats["git_head_commit"] is not None and bp is not None and _git_available(bp)
 
             return stats
 

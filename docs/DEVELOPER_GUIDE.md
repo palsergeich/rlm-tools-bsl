@@ -19,6 +19,7 @@
 15. **`docs/INDEXING.md`** — схема таблицы, API, benchmark
 16. **`docs/HELPERS.md`** — описание хелпера
 17. **`tests/`** — тесты: builder, reader, helper, CLI assertions
+18. **Git fast path** — обновить `_update_git_fast()`, `_collect_metadata_tables()` kwargs, `_insert_metadata_tables_selective()` — см. [INDEXING.md § 6.1 «Добавление новых категорий / таблиц»](INDEXING.md#добавление-новых-категорий--таблиц-чеклист-для-разработчика)
 
 ## Добавление нового хелпера (4 шага)
 

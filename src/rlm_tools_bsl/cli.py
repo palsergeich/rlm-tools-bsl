@@ -215,6 +215,13 @@ def _cmd_info(args: argparse.Namespace) -> None:
     if stats.get("file_paths"):
         print(f"  FilePaths:  {stats['file_paths']}")
     print(f"  FTS:      {'yes' if stats.get('has_fts') else 'no'}")
+    if stats.get("git_accelerated"):
+        sha_short = stats["git_head_commit"][:8] if stats.get("git_head_commit") else "?"
+        print(f"  Git:      да (коммит: {sha_short})")
+    elif stats.get("git_head_commit"):
+        print("  Git:      нет (.git недоступен, был: {})".format(stats["git_head_commit"][:8]))
+    else:
+        print("  Git:      нет")
     print(f"  DB size:  {_fmt_size(db_size)}")
 
     if stats["built_at"]:

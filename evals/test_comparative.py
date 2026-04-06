@@ -53,13 +53,10 @@ def _timed_execute(sandbox, code, step_name=""):
 # Baseline helpers -- simulate what standard tools return into LLM context
 # ---------------------------------------------------------------------------
 
+
 def _baseline_glob(directory: pathlib.Path, pattern: str) -> str:
     """Simulate Glob tool: returns all matching file paths, one per line."""
-    matches = sorted(
-        str(f.relative_to(APP_PROJECT_PATH))
-        for f in directory.glob(pattern)
-        if f.is_file()
-    )
+    matches = sorted(str(f.relative_to(APP_PROJECT_PATH)) for f in directory.glob(pattern) if f.is_file())
     return "\n".join(matches)
 
 
@@ -102,6 +99,7 @@ def _baseline_step(name, agent_param_chars, content, elapsed):
 # 1. Grep across the full app -- 500+ matching lines
 # ---------------------------------------------------------------------------
 
+
 class TestGrepComparison:
     """Grep 'import UIKit' across the entire app source (500+ matches).
 
@@ -143,12 +141,14 @@ class TestGrepComparison:
         baseline = TaskMetric(task_name=f"grep '{self.PATTERN}' across app (baseline)")
         with Timer() as t:
             output = _baseline_grep(APP_SRC, self.PATTERN)
-        baseline.steps.append(_baseline_step(
-            "Grep tool -> all matching lines",
-            agent_param_chars=50,
-            content=output,
-            elapsed=t.elapsed,
-        ))
+        baseline.steps.append(
+            _baseline_step(
+                "Grep tool -> all matching lines",
+                agent_param_chars=50,
+                content=output,
+                elapsed=t.elapsed,
+            )
+        )
 
         print(f"\n{format_comparison(rlm, baseline)}")
         assert not rlm.had_errors
@@ -158,6 +158,7 @@ class TestGrepComparison:
 # ---------------------------------------------------------------------------
 # 2. Read 10 large files -- ~1.5M chars baseline
 # ---------------------------------------------------------------------------
+
 
 class TestFileReadComparison:
     """Read the 10 largest source files and summarize them.
@@ -184,9 +185,7 @@ class TestFileReadComparison:
             result = execute(sandbox, f"content = read_file('{target}')\nprint(content[:200])")
             assert result["error"] is None
             native_start = (APP_PROJECT_PATH / target).read_text()[:200]
-            assert result["stdout"].strip() == native_start.strip(), (
-                f"Content mismatch for {target}"
-            )
+            assert result["stdout"].strip() == native_start.strip(), f"Content mismatch for {target}"
 
     def test_context_cost(self, sandbox):
         rlm = TaskMetric(task_name="read 10 large files (with RLM)")
@@ -218,12 +217,14 @@ class TestFileReadComparison:
         for f in self.TARGET_FILES:
             with Timer() as t:
                 content = _baseline_read(APP_PROJECT_PATH / f)
-            baseline.steps.append(_baseline_step(
-                f"Read {f.split('/')[-1][:25]}",
-                agent_param_chars=40,
-                content=content,
-                elapsed=t.elapsed,
-            ))
+            baseline.steps.append(
+                _baseline_step(
+                    f"Read {f.split('/')[-1][:25]}",
+                    agent_param_chars=40,
+                    content=content,
+                    elapsed=t.elapsed,
+                )
+            )
 
         print(f"\n{format_comparison(rlm, baseline)}")
         assert rlm.total_context_chars < baseline.total_context_chars
@@ -232,6 +233,7 @@ class TestFileReadComparison:
 # ---------------------------------------------------------------------------
 # 3. Multi-step exploration -- glob 1,800+ files, filter, read
 # ---------------------------------------------------------------------------
+
 
 class TestMultiStepExplorationComparison:
     """Explore the full app: glob all Swift -> filter by module -> read samples.
@@ -285,24 +287,28 @@ class TestMultiStepExplorationComparison:
                 if f.is_file() and not any(p.startswith(".") for p in f.relative_to(APP_PROJECT_PATH).parts)
             )
             glob_output = "\n".join(all_swift)
-        baseline.steps.append(_baseline_step(
-            "1. Glob **/*.swift",
-            agent_param_chars=30,
-            content=glob_output,
-            elapsed=t.elapsed,
-        ))
+        baseline.steps.append(
+            _baseline_step(
+                "1. Glob **/*.swift",
+                agent_param_chars=30,
+                content=glob_output,
+                elapsed=t.elapsed,
+            )
+        )
 
         with Timer() as t:
             schedule = [f for f in all_swift if "/ScheduleTab/" in f]
             read_output = ""
             for f in schedule[:5]:
                 read_output += _baseline_read(APP_PROJECT_PATH / f)
-        baseline.steps.append(_baseline_step(
-            "2. Read 5 module files",
-            agent_param_chars=40,
-            content=read_output,
-            elapsed=t.elapsed,
-        ))
+        baseline.steps.append(
+            _baseline_step(
+                "2. Read 5 module files",
+                agent_param_chars=40,
+                content=read_output,
+                elapsed=t.elapsed,
+            )
+        )
 
         print(f"\n{format_comparison(rlm, baseline)}")
         assert rlm.total_context_chars < baseline.total_context_chars
@@ -311,6 +317,7 @@ class TestMultiStepExplorationComparison:
 # ---------------------------------------------------------------------------
 # 4. Grep + Read chain -- search protocols, then read definitions
 # ---------------------------------------------------------------------------
+
 
 class TestGrepThenReadComparison:
     """Find all protocol definitions, then read the top files.
@@ -351,12 +358,14 @@ class TestGrepThenReadComparison:
 
         with Timer() as t:
             grep_output = _baseline_grep(APP_SRC, r"protocol ")
-        baseline.steps.append(_baseline_step(
-            "1. Grep all protocols",
-            agent_param_chars=50,
-            content=grep_output,
-            elapsed=t.elapsed,
-        ))
+        baseline.steps.append(
+            _baseline_step(
+                "1. Grep all protocols",
+                agent_param_chars=50,
+                content=grep_output,
+                elapsed=t.elapsed,
+            )
+        )
 
         with Timer() as t:
             grep_files: dict[str, int] = {}
@@ -367,12 +376,14 @@ class TestGrepThenReadComparison:
             read_output = ""
             for f in top:
                 read_output += _baseline_read(APP_PROJECT_PATH / f)
-        baseline.steps.append(_baseline_step(
-            "2. Read top 5 files",
-            agent_param_chars=40,
-            content=read_output,
-            elapsed=t.elapsed,
-        ))
+        baseline.steps.append(
+            _baseline_step(
+                "2. Read top 5 files",
+                agent_param_chars=40,
+                content=read_output,
+                elapsed=t.elapsed,
+            )
+        )
 
         print(f"\n{format_comparison(rlm, baseline)}")
         assert rlm.total_context_chars < baseline.total_context_chars
@@ -381,6 +392,7 @@ class TestGrepThenReadComparison:
 # ---------------------------------------------------------------------------
 # 5. Find usages across full codebase -- broad pattern
 # ---------------------------------------------------------------------------
+
 
 class TestFindUsagesComparison:
     """Find all @objc func declarations across the full app.
@@ -409,12 +421,14 @@ class TestFindUsagesComparison:
         baseline = TaskMetric(task_name="find @objc funcs (baseline)")
         with Timer() as t:
             output = _baseline_grep(APP_SRC, r"@objc func")
-        baseline.steps.append(_baseline_step(
-            "Grep tool -> all matching lines",
-            agent_param_chars=50,
-            content=output,
-            elapsed=t.elapsed,
-        ))
+        baseline.steps.append(
+            _baseline_step(
+                "Grep tool -> all matching lines",
+                agent_param_chars=50,
+                content=output,
+                elapsed=t.elapsed,
+            )
+        )
 
         print(f"\n{format_comparison(rlm, baseline)}")
         assert rlm.total_context_chars < baseline.total_context_chars
@@ -423,6 +437,7 @@ class TestFindUsagesComparison:
 # ---------------------------------------------------------------------------
 # 6. Understand a module -- tree + glob + read key files
 # ---------------------------------------------------------------------------
+
 
 class TestModuleUnderstandingComparison:
     """Understand the ScheduleTab module: tree it, find key files, read them.
@@ -467,23 +482,28 @@ class TestModuleUnderstandingComparison:
 
         with Timer() as t:
             from rlm_tools_bsl.helpers import make_helpers
+
             helpers, _ = make_helpers(str(APP_PROJECT_PATH))
             tree_output = helpers["tree"]("app/ScheduleTab", max_depth=2)
-        baseline.steps.append(_baseline_step(
-            "1. tree output",
-            agent_param_chars=60,
-            content=tree_output,
-            elapsed=t.elapsed,
-        ))
+        baseline.steps.append(
+            _baseline_step(
+                "1. tree output",
+                agent_param_chars=60,
+                content=tree_output,
+                elapsed=t.elapsed,
+            )
+        )
 
         with Timer() as t:
             glob_output = _baseline_glob(sched_dir, "**/*.swift")
-        baseline.steps.append(_baseline_step(
-            "2. Glob file list",
-            agent_param_chars=45,
-            content=glob_output,
-            elapsed=t.elapsed,
-        ))
+        baseline.steps.append(
+            _baseline_step(
+                "2. Glob file list",
+                agent_param_chars=45,
+                content=glob_output,
+                elapsed=t.elapsed,
+            )
+        )
 
         with Timer() as t:
             sched_files = glob_output.splitlines()
@@ -491,12 +511,14 @@ class TestModuleUnderstandingComparison:
             read_output = ""
             for f in key_files:
                 read_output += _baseline_read(APP_PROJECT_PATH / f)
-        baseline.steps.append(_baseline_step(
-            "3. Read key files",
-            agent_param_chars=40,
-            content=read_output,
-            elapsed=t.elapsed,
-        ))
+        baseline.steps.append(
+            _baseline_step(
+                "3. Read key files",
+                agent_param_chars=40,
+                content=read_output,
+                elapsed=t.elapsed,
+            )
+        )
 
         print(f"\n{format_comparison(rlm, baseline)}")
         assert rlm.total_context_chars < baseline.total_context_chars
@@ -505,6 +527,7 @@ class TestModuleUnderstandingComparison:
 # ---------------------------------------------------------------------------
 # 7. Session metadata
 # ---------------------------------------------------------------------------
+
 
 class TestSessionMetadata:
     def test_start_returns_valid_metadata(self, apple_path):

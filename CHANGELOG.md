@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.8.0] — 2026-04-06
+
+### Добавлено
+- **Git-ускоренное инкрементальное обновление** — `index update` автоматически использует `git diff` вместо полного обхода FS (`rglob + stat`), если каталог исходников внутри git-репозитория. E2E замеры: BSL-only update БГУ (14K модулей) — 17 сек, CRM (3K) — 5 сек vs ~5 мин полный скан. Прозрачный fallback на полный скан если git недоступен
+- **Селективный refresh метаданных по категориям** — при git fast path пересобираются только таблицы метаданных затронутых категорий (EventSubscriptions, Catalogs, Roles и др.), а не все 10+ таблиц целиком
+- **Dirty-снимок** — при каждом update сохраняется список dirty-файлов (staged/unstaged/untracked). При следующем update они принудительно включаются в дельту — переход dirty→clean не оставляет stale-данных
+- **Best-effort для staged/unstaged/untracked diff** — таймаут этих команд не прерывает git fast path (критичен для Docker Desktop / Virtiofs). Пропущенные файлы подхватываются через dirty-снимок
+- **Prefix-трансформация путей** — корректная работа когда `base_path` ≠ git root (EDT: `repo/src/`, CF: `repo/src/cf/`)
+- **`git_fast_path`** в ответе `update()` — `true`/`false`, позволяет отличить способ обновления
+- **`git_accelerated` + `git_head_commit`** в `index info` / `get_statistics()` — информация о git-ускорении
+- **CLI `index info`** — строка `Git: да (коммит: abc12345)` / `нет (.git недоступен, был: ...)` / `нет`
+- **Инкрементальный `file_paths`** — при git fast path без meta-изменений `file_paths` обновляется только для затронутых BSL-файлов
+- **Docker: git в образе** — `python:3.12-slim` дополнен установкой `git` для поддержки git fast path в контейнере
+- 44 новых теста git-утилит, fast path, fallback, dirty snapshot, selective metadata
+
 ## [1.7.4] — 2026-04-05
 
 ### Изменено
