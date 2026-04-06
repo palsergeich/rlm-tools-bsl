@@ -7,8 +7,10 @@ selective metadata refresh, dirty snapshot, and build-time flag guards.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -293,6 +295,10 @@ class TestGitChangedFiles:
         # README.md is outside prefix "src" — should NOT be in result
         assert "README.md" not in changed
 
+    @pytest.mark.skipif(
+        sys.platform == "win32" and not os.environ.get("PYTHONUTF8"),
+        reason="Windows CI uses cp1252 stdout — Cyrillic assert output crashes pytest",
+    )
     def test_cyrillic_paths(self, git_bsl_project):
         root = git_bsl_project.parent
         sha = _git_head_sha(str(git_bsl_project))
