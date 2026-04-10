@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.8.1] — 2026-04-10
 
 ### Исправлено
 - **Docker на Windows: CRLF в entrypoint** — добавлен `.gitattributes` (`*.sh text eol=lf`), гарантирующий LF-окончания в shell-скриптах при checkout на любой платформе. Устраняет ошибку `exec /home/rlm/docker-entrypoint.sh: no such file or directory` при сборке образа на Windows с `core.autocrlf=true`
